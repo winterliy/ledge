@@ -7,6 +7,17 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:26.3.build.218-stable")
 }
 
+tasks.jar {
+    from(
+        project(":common")
+            .extensions
+            .getByType<org.gradle.api.tasks.SourceSetContainer>()
+            .named("main")
+            .get()
+            .output
+    )
+}
+
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
