@@ -1,0 +1,5 @@
+name: Ledge
+version: '${version}'
+main: dev.ledge.glap1.LedgeGlap1Plugin
+api-version: '26.3'
+description: GLAP1 server adapter for Ledge.
