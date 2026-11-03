@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ledge Map</title>
+  <style>
+    :root{color-scheme:dark;font:14px system-ui,sans-serif;background:#101516;color:#e9efeb}
+    *{box-sizing:border-box}body{margin:0;overflow:hidden}.toolbar{height:56px;display:flex;align-items:center;gap:10px;padding:0 16px;background:#192120;border-bottom:1px solid #35403d;position:relative;z-index:2}
+    .brand{font-weight:750;letter-spacing:.04em;margin-right:10px;color:#a7dbbb}select,button{font:inherit;color:inherit;background:#25302d;border:1px solid #43504b;border-radius:8px;padding:7px 10px}button{cursor:pointer}button:hover,select:hover{background:#303d39}
+    #world{min-width:210px}.spacer{flex:1}.status{color:#a5b2ac;font-size:12px}#viewport{height:calc(100vh - 56px);display:grid;place-items:center;overflow:hidden;background-color:#17201e;background-image:linear-gradient(45deg,#202a27 25%,transparent 25%),linear-gradient(-45deg,#202a27 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#202a27 75%),linear-gradient(-45deg,transparent 75%,#202a27 75%);background-size:32px 32px;background-position:0 0,0 16px,16px -16px,-16px 0}
+    canvas{width:100%;height:100%;cursor:grab;transform-origin:center;transition:transform .18s ease;image-rendering:pixelated}canvas.dragging{cursor:grabbing}.controls{position:absolute;right:18px;top:74px;display:grid;gap:7px;z-index:1}.controls button{width:38px;height:38px;font-size:18px;padding:0}.help{position:absolute;bottom:14px;left:16px;background:#101715c9;border:1px solid #43504b;border-radius:8px;padding:8px 11px;color:#c3cec8;font-size:12px;pointer-events:none}
+    @media(max-width:700px){.toolbar{gap:6px;padding:0 8px}.brand{display:none}#world{min-width:140px}.status{display:none}}
+  </style>
+</head>
+<body>
+  <header class="toolbar"><div class="brand">LEDGE</div><select id="world" aria-label="World"></select><select id="renderer" aria-label="Renderer"><option value="SURFACE">Surface</option><option value="FLAT">Flat</option><option value="CAVE">Caves</option></select><select id="resolution" aria-label="Resolution"><option value="LOW">Low</option><option value="STANDARD">Standard</option><option value="HIGH">High</option><option value="ULTRA">Ultra</option></select><button id="projection">2D</button><label><input id="players" type="checkbox" checked> Players</label><div class="spacer"></div><span id="status" class="status">Connecting…</span></header>
+  <main id="viewport"><canvas id="map"></canvas><div class="controls"><button id="zoomIn" title="Zoom in">+</button><button id="zoomOut" title="Zoom out">−</button><button id="center" title="Center">⌖</button></div><div class="help">Drag to pan · Scroll to zoom · Updates automatically</div></main>
+  <script>
+    const canvas=document.querySelector('#map'),ctx=canvas.getContext('2d'),worldSelect=document.querySelector('#world'),rendererSelect=document.querySelector('#renderer'),resolutionSelect=document.querySelector('#resolution'),status=document.querySelector('#status');
+    let world=null,cameraX=0,cameraZ=0,scale=1,projection3d=false,players=[],lastTiles=new Map(),drag=null;
+    function resize(){const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.floor(canvas.clientWidth*dpr);canvas.height=Math.floor(canvas.clientHeight*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);draw()}
+    async function loadWorlds(){const worlds=await fetch('/api/worlds',{cache:'no-store'}).then(r=>r.json());worldSelect.replaceChildren(...worlds.map((w,i)=>{const o=document.createElement('option');o.value=JSON.stringify(w);o.textContent=w.label;if(i===0)world=w;return o}));if(world){worldSelect.value=JSON.stringify(world);cameraX=world.x;cameraZ=world.z;rendererSelect.value=world.renderer;resolutionSelect.value=world.resolution}draw()}
+    function tileSpan(){return 256/({LOW:2,STANDARD:4,HIGH:8,ULTRA:16}[resolutionSelect.value]||4)*(1<<Math.max(0,zoomLevel()))}
+    function zoomLevel(){return Math.max(0,Math.min(12,Math.round(-Math.log2(scale))))}
+    function tileUrl(tx,tz){const q=new URLSearchParams({world:world.world,dimension:world.dimension,renderer:rendererSelect.value,resolution:resolutionSelect.value,zoom:String(zoomLevel()),x:String(tx),z:String(tz)});return '/tiles?'+q.toString()}
+    function draw(){if(!ctx||!canvas.width)return;const w=canvas.clientWidth,h=canvas.clientHeight,dpr=canvas.width/w;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);if(!world)return;
+      const span=tileSpan(),tilePx=256*scale,cx=Math.floor(cameraX/span),cz=Math.floor(cameraZ/span),offsetX=(cameraX-cx*span)/span*tilePx,offsetZ=(cameraZ-cz*span)/span*tilePx;
+      for(let dz=-Math.ceil(h/tilePx/2)-1;dz<=Math.ceil(h/tilePx/2)+1;dz++)for(let dx=-Math.ceil(w/tilePx/2)-1;dx<=Math.ceil(w/tilePx/2)+1;dx++){
+        const tx=cx+dx,tz=cz+dz,key=tx+','+tz,px=w/2+dx*tilePx-offsetX,pz=h/2+dz*tilePx-offsetZ;let entry=lastTiles.get(key);if(!entry){entry={image:new Image(),loading:false,loaded:false,retryAt:0};lastTiles.set(key,entry)}
+        if(!entry.loading&&!entry.loaded&&Date.now()>=entry.retryAt){entry.loading=true;entry.image.onload=()=>{entry.loading=false;entry.loaded=true;draw()};entry.image.onerror=async()=>{entry.loading=false;const response=await fetch(tileUrl(tx,tz),{cache:'no-store'});if(response.status===202){status.textContent='Rendering tiles…';entry.retryAt=Date.now()+800}else if(response.ok){entry.image.src=tileUrl(tx,tz)+'&v='+Date.now();return}else{status.textContent='Map tile unavailable';entry.retryAt=Date.now()+5000}setTimeout(draw,Math.max(10,entry.retryAt-Date.now()))};entry.image.src=tileUrl(tx,tz)+'&v='+Date.now()}
+        if(entry.loaded)ctx.drawImage(entry.image,px,pz,tilePx,tilePx)
+      }
+      if(document.querySelector('#players').checked)for(const p of players){if(p.world!==world.world||p.dimension!==world.dimension)continue;const px=w/2+(p.x-cameraX)*256/(span/scale),pz=h/2+(p.z-cameraZ)*256/(span/scale);if(px>-30&&pz>-30&&px<w+30&&pz<h+30){ctx.fillStyle='#f3c76b';ctx.beginPath();ctx.arc(px,pz,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='12px system-ui';ctx.fillText(p.name,px+8,pz+4)}}
+      status.textContent=`${world.label} · ${rendererSelect.value} · ${resolutionSelect.value} · ${Math.round(scale*100)}%`
+    }
+    function setWorld(){world=JSON.parse(worldSelect.value);cameraX=world.x;cameraZ=world.z;lastTiles.clear();draw()}
+    worldSelect.addEventListener('change',setWorld);for(const el of [rendererSelect,resolutionSelect])el.addEventListener('change',()=>{lastTiles.clear();draw()});
+    document.querySelector('#projection').addEventListener('click',e=>{projection3d=!projection3d;canvas.style.transform=projection3d?'perspective(1100px) rotateX(22deg)':'none';e.currentTarget.textContent=projection3d?'3D':'2D'});
+    document.querySelector('#zoomIn').onclick=()=>zoomAt(scale*1.35);document.querySelector('#zoomOut').onclick=()=>zoomAt(scale/1.35);document.querySelector('#center').onclick=()=>{cameraX=world.x;cameraZ=world.z;draw()};
+    function zoomAt(next){scale=Math.max(.125,Math.min(4,next));lastTiles.clear();draw()}
+    canvas.addEventListener('wheel',e=>{e.preventDefault();zoomAt(scale*(e.deltaY<0?1.15:1/1.15))},{passive:false});
+    canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,z:e.clientY,cx:cameraX,cz:cameraZ};canvas.setPointerCapture(e.pointerId);canvas.classList.add('dragging')});
+    canvas.addEventListener('pointermove',e=>{if(!drag)return;const span=tileSpan()/scale/256;cameraX=drag.cx-(e.clientX-drag.x)*span;cameraZ=drag.cz-(e.clientY-drag.z)*span;draw()});
+    canvas.addEventListener('pointerup',()=>{drag=null;canvas.classList.remove('dragging')});
+    async function refreshPlayers(){try{players=await fetch('/api/players',{cache:'no-store'}).then(r=>r.json());draw()}catch{}}
+    async function refreshTiles(){lastTiles.clear();draw();refreshPlayers()}
+    new ResizeObserver(resize).observe(canvas);loadWorlds().then(()=>{resize();refreshPlayers()});setInterval(refreshTiles,2500);setInterval(refreshPlayers,2500);
+  </script>
+</body>
+</html>

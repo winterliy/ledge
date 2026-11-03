@@ -1,0 +1,13 @@
+web:
+  enabled: true
+  host: 127.0.0.1
+  port: 8123
+  allow-external: false
+render:
+  max-samples-per-tick: 2048
+  workers: 1
+defaults:
+  renderer: SURFACE
+  resolution: STANDARD
+  live-updates: true
+worlds: {}

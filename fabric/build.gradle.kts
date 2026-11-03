@@ -2,8 +2,6 @@ plugins {
     id("net.fabricmc.fabric-loom") version "1.19-SNAPSHOT"
 }
 
-version = "0.1.0-SNAPSHOT"
-
 dependencies {
     implementation(project(":common"))
     include(project(":common"))
@@ -15,4 +13,12 @@ dependencies {
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(25))
     withSourcesJar()
+}
+
+tasks.processResources {
+    val modVersion = project.version.toString()
+    inputs.property("version", modVersion)
+    filesMatching("fabric.mod.json") {
+        expand("version" to modVersion)
+    }
 }

@@ -1,0 +1,73 @@
+package dev.ledge.common;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Optional;
+import java.util.UUID;
+
+/** Atomic filesystem-backed PNG tile store shared by server and client adapters. */
+public final class FileMapTileStore implements MapTileStore {
+    private final Path root;
+
+    public FileMapTileStore(Path root) {
+        this.root = root.toAbsolutePath().normalize();
+    }
+
+    @Override
+    public Optional<BufferedImage> read(MapTileKey key) throws IOException {
+        Path file = tilePath(key);
+        if (!Files.isRegularFile(file)) {
+            return Optional.empty();
+        }
+        BufferedImage image = ImageIO.read(file.toFile());
+        if (image == null || image.getWidth() != MapTileKey.TILE_SIZE || image.getHeight() != MapTileKey.TILE_SIZE) {
+            return Optional.empty();
+        }
+        return Optional.of(image);
+    }
+
+    @Override
+    public void write(MapTileKey key, BufferedImage image) throws IOException {
+        if (image == null || image.getWidth() != MapTileKey.TILE_SIZE || image.getHeight() != MapTileKey.TILE_SIZE) {
+            throw new IllegalArgumentException("map tiles must be exactly 256x256 pixels");
+        }
+        Path file = tilePath(key);
+        Files.createDirectories(file.getParent());
+        Path temporary = file.resolveSibling(file.getFileName() + "." + UUID.randomUUID() + ".tmp");
+        try {
+            if (!ImageIO.write(image, "png", temporary.toFile())) {
+                throw new IOException("PNG writer is not available");
+            }
+            try {
+                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    @Override
+    public void delete(MapTileKey key) throws IOException {
+        Files.deleteIfExists(tilePath(key));
+    }
+
+    public Path tilePath(MapTileKey key) {
+        Path path = root.resolve(key.worldId())
+                .resolve(key.dimensionId())
+                .resolve(key.renderer().name().toLowerCase(java.util.Locale.ROOT))
+                .resolve(key.resolution().name().toLowerCase(java.util.Locale.ROOT))
+                .resolve("z" + key.zoom())
+                .resolve(key.tileX() + "_" + key.tileZ() + ".png")
+                .normalize();
+        if (!path.startsWith(root)) {
+            throw new IllegalArgumentException("tile path escaped storage root");
+        }
+        return path;
+    }
+}

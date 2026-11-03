@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "ledge",
-  "version": "0.1.0-SNAPSHOT",
+  "version": "${version}",
   "name": "Ledge",
   "description": "Fabric adapter for the Ledge map project.",
   "environment": "*",
