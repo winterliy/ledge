@@ -30,6 +30,14 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - Right-click opens point and freeform-area tools. Points accept a name and hex banner color; areas accept a name/color and can be translucent fills or outlines. Hold Shift while drawing to add a straight segment from the last point. These annotations persist locally per server, world, and dimension in `config/ledge/annotations/`.
 - The GLAP adapter retains bounded subscriptions to requested tiles and pushes a refreshed tile after server-side rendering completes.
 
+### Latest work session (2026-11-05)
+
+- Added an isometric diamond-tile projection to both Fabric and the GLAP web map. Panning, player markers, coordinate lookup, and annotation input account for the projection.
+- Added directional height shading to surface tiles, then expanded sampling by one sample around each tile so slope lighting can read neighboring loaded terrain across tile edges. Unloaded border chunks are not loaded; their border heights use the nearest sampled height.
+- Moved tile files to a versioned renderer path (`v2`). The previous cache remains on disk, while the updated renderer regenerates tiles as they are requested.
+- Verified with `./gradlew --no-daemon --offline --no-configuration-cache :common:compileJava :glap1:compileJava :fabric:compileJava`.
+- Changes are pushed to `main` in commits `a2bd845` (isometric projection) and `616b4be` (continuous surface relief).
+
 ### Known limitations
 
 - The isometric projection places the same square map tiles in a diamond grid in both clients. Surface relief is conveyed by shared height shading; terrain elevation is not yet extruded into full 3D geometry. Renderer and resolution follow the selected target's server configuration.
@@ -45,8 +53,13 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 
 ## Next implementation steps
 
-1. Add elevation-aware terrain geometry to the isometric view and improve the material palette beyond heuristic biome tints.
-2. Add screenshot preview/confirmation and runtime verification on a GLAP server and Fabric client; check live updates and Chunky operation.
+Start here next:
+
+1. Inspect `common/src/main/java/dev/ledge/common/MapBlockSample.java`, `MapTileRenderers.java`, `MapTileKey.java`, and `glap1/src/main/java/dev/ledge/glap1/MapTileEngine.java` to plan elevation-aware terrain geometry. The current isometric mode only arranges flat square PNG tiles as diamonds; height affects color shading, not tile vertex positions. Keep the same geometry and coordinate mapping in Fabric and the web map, and keep sampling bounded without loading chunks.
+2. Before implementing terrain geometry, decide how to transport/cache height data alongside color tiles so both clients can reconstruct the same surface without relying on colors or duplicating world sampling.
+3. Then add a screenshot preview/confirmation and verify the complete map on a GLAP server and Fabric client, including projection interaction, live updates, renderer/resolution changes, and Chunky operation.
+
+For the next session, begin with a short design pass for the height-data format and tile-edge handling, then implement the shared data contract before changing either client renderer.
 
 ## Requirements
 
