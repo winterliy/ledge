@@ -8,6 +8,9 @@
   "entrypoints": {
     "main": [
       "dev.ledge.fabric.LedgeFabricMod"
+    ],
+    "client": [
+      "dev.ledge.fabric.LedgeFabricClient"
     ]
   },
   "depends": {

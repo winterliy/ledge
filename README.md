@@ -4,7 +4,7 @@ Ledge is a shared Minecraft map project with two platform adapters:
 
 - `common`: platform-independent map coordinates, tile keys, render styles, resolutions, marker/area models, and PNG tile storage.
 - `glap1`: Paper/GLAP1 plugin with a localhost web map, server-side tile renderer, block-change refresh, and optional Chunky API integration.
-- `fabric`: Fabric client mod. It is still the original loader skeleton; the full-screen map and client tools have not been implemented yet.
+- `fabric`: Fabric client mod with a configurable Controls key, full-screen tile viewer, map panning/zoom, coordinate readout, player marker toggle, and selected-region screenshots.
 
 ## Current progress
 
@@ -20,26 +20,33 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - GLAP web map can select loaded worlds, renderer, resolution, 2D/3D view, and player-marker visibility. Player markers are currently simple dots.
 - Placing, breaking, burning, and explosion changes invalidate affected surface tiles for live refresh.
 - Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
+- Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
+- Fabric requests server world settings and nearby tiles over the `ledge:map` play channel. PNG responses are split into bounded fragments, reassembled with transfer limits, and held in a capped, dimension-aware client texture cache.
+- The Fabric map follows the player by default, supports drag panning and wheel zoom (`0`–`12`), and reports hovered block X/Z plus player Y in a closable coordinate panel. Resolution and renderer follow the server's current-world settings.
+- The local player marker can be toggled from the map. Zoom works with the wheel and `−`/`+` buttons. The print control arms a drag selection and saves the selected screen region in the Minecraft `screenshots/` folder.
+- Right-click opens point and rectangle-area tools. Points accept a name and hex banner color; areas accept a name/color and can be translucent fills or outlines. These annotations persist locally per server and dimension in `config/ledge/annotations/`.
+- The GLAP adapter retains bounded subscriptions to requested tiles and pushes a refreshed tile after server-side rendering completes.
 
 ### Known limitations
 
-- The Fabric module does not yet include the requested full-screen map, configurable `Z` key, live tile protocol, local player-marker toggle, hovered XYZ panel, right-click tools, map layers, or screenshot selection/export.
+- Fabric's controls for dimension and 2D/3D view are still to be built; renderer and resolution currently follow the server's current-world settings.
+- Fabric area drawing currently creates rectangles. Freeform pencil polygons and web/Fabric annotation synchronization are not implemented.
+- The screenshot tool writes the selected region directly without a preview or confirmation.
+- The plugin-message channel requires both the GLAP plugin and Fabric mod on the same server connection. The web map remains plugin-only.
 - GLAP web view is a first pass. Its 3D mode is a visual tilt of the 2D canvas, not a true 3D terrain renderer.
 - The cave renderer currently has no server-side cave sampling, so it produces transparent tiles. The block palette is a basic material-name approximation, not Minecraft's full biome/texture map color system.
 - Web player markers are dots without skin-face icons. Chat, game time/date, and share links are intentionally omitted.
-- Marker and area models exist in `common`, but persistence and editing UI are not connected yet.
+- Client annotations are local and are not yet sent to the server or shown in the web map.
 - The renderer currently samples the top block of already-loaded columns. Chunky pre-generation is optional and is not automatically started by opening the map.
 - Dynmap code has not been copied; its behavior and tile concepts are being reimplemented for the current target. The Xaero implementation has not been copied or integrated.
-- No full gameplay/integration testing has been done. The latest compile check was `./gradlew :common:jar :glap1:jar`; Fabric has not changed from the initial skeleton in this implementation pass.
+- No full gameplay/integration testing has been done. The latest build check was `./gradlew :common:jar :glap1:jar :fabric:jar`.
 
 ## Next implementation steps
 
 1. Finish GLAP world rendering: biome/material map colors, cave sampling, 3D renderer, tile revision handling, and accurate per-world/dimension configuration.
-2. Add the bounded, versioned plugin-message tile protocol so Fabric clients can request and receive live tiles without depending on the web port.
-3. Build the Fabric full-screen map: Controls key (default `Z`), pan/zoom, dimension and 2D/3D selection, renderer/resolution controls, local player-marker toggle, and top-left hover XYZ panel with close button.
-4. Add Fabric right-click tools for named hex-color point markers, translucent filled areas, and outlines; persist them by server, world, and dimension.
-5. Add drag-to-select PNG export under the Minecraft `screenshots/` folder, with preview/confirmation and strict image-size limits.
-6. Add runtime verification on a GLAP server and Fabric client, check live updates and Chunky operation, then package and document install/config steps.
+2. Add client controls for dimension and 2D/3D view, plus freeform polygon areas.
+3. Decide whether annotations should sync to the server and web map, then add that persistence path.
+4. Add screenshot preview/confirmation and runtime verification on a GLAP server and Fabric client; check live updates and Chunky operation.
 
 ## Requirements
 

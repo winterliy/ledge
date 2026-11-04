@@ -10,11 +10,14 @@ import java.util.logging.Level;
 public final class LedgeGlap1Plugin extends JavaPlugin {
     private MapTileEngine tileEngine;
     private LedgeMapHttpServer webServer;
+    private LedgeFabricBridge fabricBridge;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         tileEngine = new MapTileEngine(this);
+        fabricBridge = new LedgeFabricBridge(this, tileEngine);
+        fabricBridge.register();
         tileEngine.runTaskTimer(this, 1L, 1L);
         Bukkit.getPluginManager().registerEvents(new LedgeWorldListener(tileEngine), this);
         ChunkyBridge chunky = ChunkyBridge.connect(this);
@@ -37,6 +40,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (webServer != null) webServer.stop();
+        if (fabricBridge != null) fabricBridge.unregister();
         if (tileEngine != null) tileEngine.shutdown();
     }
 }

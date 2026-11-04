@@ -37,8 +37,11 @@ final class MapTileEngine extends BukkitRunnable {
     private final int maxSamplesPerTick;
     private final ConcurrentLinkedQueue<Job> pending = new ConcurrentLinkedQueue<>();
     private final Map<MapTileKey, Job> queued = new ConcurrentHashMap<>();
+    private final Set<MapTileKey> rendering = ConcurrentHashMap.newKeySet();
     private final Set<MapTileKey> dirty = ConcurrentHashMap.newKeySet();
     private final Map<MapTileKey, AtomicLong> revisions = new ConcurrentHashMap<>();
+    private final Map<MapTileKey, java.util.concurrent.CopyOnWriteArraySet<java.util.function.Consumer<byte[]>>> readyCallbacks = new ConcurrentHashMap<>();
+    private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.BiConsumer<MapTileKey, byte[]>> tileListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean closed;
     private final ThreadPoolExecutor renderer = new ThreadPoolExecutor(
             1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(128), runnable -> {
@@ -67,6 +70,49 @@ final class MapTileEngine extends BukkitRunnable {
             request(key);
         }
         return image;
+    }
+
+    void readOrRequest(MapTileKey key, java.util.function.Consumer<byte[]> callback) {
+        if (closed) return;
+        readyCallbacks.computeIfAbsent(key, ignored -> new java.util.concurrent.CopyOnWriteArraySet<>()).add(callback);
+        try {
+            renderer.execute(() -> {
+                try {
+                    Optional<BufferedImage> image = dirty.contains(key) ? Optional.empty() : store.read(key);
+                    if (image.isPresent()) {
+                        byte[] png = encodePng(image.get());
+                        Bukkit.getScheduler().runTask(plugin, () -> deliver(key, png));
+                    } else {
+                        request(key);
+                    }
+                } catch (IOException exception) {
+                    plugin.getLogger().log(Level.WARNING, "Could not read map tile " + key, exception);
+                    Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            readyCallbacks.remove(key);
+            plugin.getLogger().warning("Map render queue is full; dropping tile read " + key);
+        }
+    }
+
+    private static byte[] encodePng(BufferedImage image) throws IOException {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
+    private void deliver(MapTileKey key, byte[] png) {
+        var callbacks = readyCallbacks.remove(key);
+        if (callbacks != null) callbacks.forEach(callback -> callback.accept(png));
+    }
+
+    void addTileListener(java.util.function.BiConsumer<MapTileKey, byte[]> listener) {
+        tileListeners.add(listener);
+    }
+
+    void removeTileListener(java.util.function.BiConsumer<MapTileKey, byte[]> listener) {
+        tileListeners.remove(listener);
     }
 
     void request(MapTileKey key) {
@@ -183,7 +229,7 @@ final class MapTileEngine extends BukkitRunnable {
     }
 
     private void renderAsync(Job job) {
-        queued.remove(job.key, job);
+        if (!rendering.add(job.key)) return;
         try {
             renderer.execute(() -> {
                 try {
@@ -192,14 +238,29 @@ final class MapTileEngine extends BukkitRunnable {
                     store.write(job.key, image);
                     if (revision(job.key) == job.revision) {
                         dirty.remove(job.key);
+                        if (readyCallbacks.containsKey(job.key) || !tileListeners.isEmpty()) {
+                            byte[] png = encodePng(image);
+                            Bukkit.getScheduler().runTask(plugin, () -> {
+                                deliver(job.key, png);
+                                tileListeners.forEach(listener -> listener.accept(job.key, png));
+                            });
+                        }
                     } else {
                         request(job.key);
                     }
                 } catch (IOException | RuntimeException exception) {
                     plugin.getLogger().log(Level.WARNING, "Could not render map tile " + job.key, exception);
+                } finally {
+                    rendering.remove(job.key);
+                    queued.remove(job.key, job);
+                    if (dirty.contains(job.key) && revision(job.key) != job.revision) {
+                        Bukkit.getScheduler().runTask(plugin, () -> request(job.key));
+                    }
                 }
             });
         } catch (RejectedExecutionException exception) {
+            rendering.remove(job.key);
+            queued.remove(job.key, job);
             plugin.getLogger().warning("Map render queue is full; dropping tile " + job.key);
             dirty.add(job.key);
         }
