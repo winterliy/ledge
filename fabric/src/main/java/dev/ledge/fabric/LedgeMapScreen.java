@@ -14,6 +14,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 public final class LedgeMapScreen extends Screen {
     private int centerX;
@@ -50,10 +53,11 @@ public final class LedgeMapScreen extends Screen {
     private boolean colorFieldActive;
     private int dialogX;
     private int dialogZ;
-    private int areaStartX;
-    private int areaStartZ;
-    private int areaEndX;
-    private int areaEndZ;
+    private final List<LocalMapAnnotations.Point> areaPoints = new ArrayList<>();
+    private List<LocalMapAnnotations.Point> dialogAreaPoints = List.of();
+    private LocalMapAnnotations.Point straightEndpoint;
+    private double lastAreaSampleX;
+    private double lastAreaSampleY;
     private int dialogMinX;
     private int dialogMinZ;
     private int dialogMaxX;
@@ -151,14 +155,18 @@ public final class LedgeMapScreen extends Screen {
             graphics.fill((int) markerX - 3, (int) markerZ - 3, (int) markerX + 4, (int) markerZ + 4, 0xffff5a5a);
         }
         for (var area : LocalMapAnnotations.areas()) {
-            int x1 = mapX(left, mapSize, area.minX());
-            int x2 = mapX(left, mapSize, area.maxX());
-            int z1 = mapZ(top, mapSize, area.minZ());
-            int z2 = mapZ(top, mapSize, area.maxZ());
             int rgb = Integer.parseInt(area.color().substring(1), 16);
-            if (area.filled()) graphics.fill(x1, z1, x2, z2, 0x55000000 | rgb);
-            graphics.outline(x1, z1, x2, z2, 0xff000000 | rgb);
-            graphics.text(font, area.name(), x1 + 3, z1 + 3, 0xffffffff);
+            List<LocalMapAnnotations.Point> points = area.points();
+            if (points == null || points.size() < 3) {
+                points = List.of(new LocalMapAnnotations.Point(area.minX(), area.minZ()),
+                        new LocalMapAnnotations.Point(area.maxX(), area.minZ()),
+                        new LocalMapAnnotations.Point(area.maxX(), area.maxZ()),
+                        new LocalMapAnnotations.Point(area.minX(), area.maxZ()));
+            }
+            drawPolygon(graphics, points, left, top, mapSize, 0x55000000 | rgb, 0xff000000 | rgb, area.filled());
+            var first = points.get(0);
+            graphics.text(font, area.name(), mapX(left, mapSize, first.x()) + 3,
+                    mapZ(top, mapSize, first.z()) + 3, 0xffffffff);
         }
         for (var marker : LocalMapAnnotations.markers()) {
             int x = mapX(left, mapSize, marker.x());
@@ -193,7 +201,9 @@ public final class LedgeMapScreen extends Screen {
             graphics.text(font, "Y " + pos.getY(), 20, 52, 0xffdce5eb);
             graphics.text(font, "Z " + worldZ, 20, 66, 0xffdce5eb);
         }
-        graphics.centeredText(font, "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가", width / 2, height - 18, 0xffb8c2ca);
+        String hint = selectingArea ? "자유 선택 · Shift: 직선 구간 · 놓으면 완료" :
+                "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
+        graphics.centeredText(font, hint, width / 2, height - 18, 0xffb8c2ca);
         if (selectingPrint) {
             int sx = (int) Math.min(selectionStartX, selectionEndX);
             int sy = (int) Math.min(selectionStartY, selectionEndY);
@@ -203,12 +213,22 @@ public final class LedgeMapScreen extends Screen {
             graphics.outline(sx, sy, ex, ey, 0xff66b1ff);
         }
         if (selectingArea) {
-            int sx = (int) Math.min(selectionStartX, selectionEndX);
-            int sy = (int) Math.min(selectionStartY, selectionEndY);
-            int ex = (int) Math.max(selectionStartX, selectionEndX);
-            int ey = (int) Math.max(selectionStartY, selectionEndY);
-            graphics.fill(sx, sy, ex, ey, areaFilled ? 0x552196f3 : 0x221d9e74);
-            graphics.outline(sx, sy, ex, ey, 0xff66b1ff);
+            List<LocalMapAnnotations.Point> preview = new ArrayList<>(areaPoints);
+            LocalMapAnnotations.Point end = straightEndpoint;
+            if (end != null && !preview.isEmpty()) preview.add(end);
+            drawPolygon(graphics, preview, left, top, mapSize, 0x552196f3, 0xff66b1ff, areaFilled && preview.size() >= 3);
+            if (preview.size() > 1) {
+                for (int i = 1; i < preview.size(); i++) {
+                    var a = preview.get(i - 1);
+                    var b = preview.get(i);
+                    drawLine(graphics, mapX(left, mapSize, a.x()), mapZ(top, mapSize, a.z()),
+                            mapX(left, mapSize, b.x()), mapZ(top, mapSize, b.z()), 0xff66b1ff);
+                }
+                if (straightEndpoint == null) {
+                    var last = preview.get(preview.size() - 1);
+                    drawLine(graphics, mapX(left, mapSize, last.x()), mapZ(top, mapSize, last.z()), mouseX, mouseY, 0xff66b1ff);
+                }
+            }
         }
         if (contextMenuVisible) {
             graphics.fill(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + 66, 0xf020252b);
@@ -233,12 +253,6 @@ public final class LedgeMapScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         double x = event.x();
         double y = event.y();
-        if (annotationDialog) {
-            int dy = (height - 118) / 2;
-            if (y >= dy + 30 && y <= dy + 54) colorFieldActive = false;
-            else if (y >= dy + 56 && y <= dy + 82) colorFieldActive = true;
-            return true;
-        }
         if (annotationDialog) {
             int dy = (height - 118) / 2;
             if (y >= dy + 30 && y <= dy + 54) colorFieldActive = false;
@@ -305,11 +319,16 @@ public final class LedgeMapScreen extends Screen {
             if (awaitingArea && onMap(x, y)) {
                 awaitingArea = false;
                 selectingArea = true;
+                areaPoints.clear();
+                straightEndpoint = null;
                 selectionStartX = selectionEndX = x;
                 selectionStartY = selectionEndY = y;
                 int size = mapSize();
-                areaStartX = mapWorldX((width - size) / 2, size, (int) x);
-                areaStartZ = mapWorldZ((height - size) / 2, size, (int) y);
+                areaPoints.add(new LocalMapAnnotations.Point(
+                        mapWorldX((width - size) / 2, size, (int) x),
+                        mapWorldZ((height - size) / 2, size, (int) y)));
+                lastAreaSampleX = x;
+                lastAreaSampleY = y;
                 return true;
             }
             dragging = true;
@@ -328,6 +347,25 @@ public final class LedgeMapScreen extends Screen {
         if (selectingArea) {
             selectionEndX = event.x();
             selectionEndY = event.y();
+            int size = mapSize();
+            var point = new LocalMapAnnotations.Point(
+                    mapWorldX((width - size) / 2, size, (int) event.x()),
+                    mapWorldZ((height - size) / 2, size, (int) event.y()));
+            if (minecraft.hasShiftDown()) {
+                straightEndpoint = point;
+                return true;
+            }
+            if (straightEndpoint != null) {
+                appendAreaPoint(straightEndpoint);
+                straightEndpoint = null;
+                lastAreaSampleX = event.x();
+                lastAreaSampleY = event.y();
+            }
+            if (Math.hypot(event.x() - lastAreaSampleX, event.y() - lastAreaSampleY) >= 4.0) {
+                appendAreaPoint(point);
+                lastAreaSampleX = event.x();
+                lastAreaSampleY = event.y();
+            }
             return true;
         }
         if (selectingPrint) {
@@ -359,16 +397,29 @@ public final class LedgeMapScreen extends Screen {
         if (selectingArea && event.button() == 0) {
             selectingArea = false;
             int size = mapSize();
-            areaEndX = mapWorldX((width - size) / 2, size, (int) event.x());
-            areaEndZ = mapWorldZ((height - size) / 2, size, (int) event.y());
-            if (areaStartX != areaEndX && areaStartZ != areaEndZ) {
-                dialogIsArea = true;
-                dialogMinX = Math.min(areaStartX, areaEndX);
-                dialogMaxX = Math.max(areaStartX, areaEndX);
-                dialogMinZ = Math.min(areaStartZ, areaEndZ);
-                dialogMaxZ = Math.max(areaStartZ, areaEndZ);
-                openAnnotationDialog();
+            var end = new LocalMapAnnotations.Point(
+                    mapWorldX((width - size) / 2, size, (int) event.x()),
+                    mapWorldZ((height - size) / 2, size, (int) event.y()));
+            if (minecraft.hasShiftDown()) {
+                straightEndpoint = end;
+                appendAreaPoint(straightEndpoint);
+            } else {
+                if (straightEndpoint != null) appendAreaPoint(straightEndpoint);
+                appendAreaPoint(end);
             }
+            if (areaPoints.size() >= 3 && hasThreeDistinctAreaPoints()) {
+                dialogIsArea = true;
+                dialogAreaPoints = List.copyOf(areaPoints);
+                dialogMinX = areaPoints.stream().mapToInt(LocalMapAnnotations.Point::x).min().orElse(0);
+                dialogMaxX = areaPoints.stream().mapToInt(LocalMapAnnotations.Point::x).max().orElse(0);
+                dialogMinZ = areaPoints.stream().mapToInt(LocalMapAnnotations.Point::z).min().orElse(0);
+                dialogMaxZ = areaPoints.stream().mapToInt(LocalMapAnnotations.Point::z).max().orElse(0);
+                openAnnotationDialog();
+            } else if (minecraft.player != null) {
+                minecraft.player.sendOverlayMessage(Component.literal("영역을 만들려면 넓이가 있는 점 세 개 이상이 필요합니다."));
+            }
+            areaPoints.clear();
+            straightEndpoint = null;
             return true;
         }
         if (selectingPrint && event.button() == 0) {
@@ -442,6 +493,7 @@ public final class LedgeMapScreen extends Screen {
         }
         if (event.key() == 256) {
             annotationDialog = false;
+            dialogAreaPoints = List.of();
             return true;
         }
         if (event.key() == 258) {
@@ -484,7 +536,8 @@ public final class LedgeMapScreen extends Screen {
         String color = dialogColor.toUpperCase(java.util.Locale.ROOT);
         if (dialogIsArea) {
             LocalMapAnnotations.addArea(new LocalMapAnnotations.Area(dialogMinX, dialogMinZ, dialogMaxX, dialogMaxZ,
-                    name, color, areaFilled));
+                    name, color, areaFilled, dialogAreaPoints));
+            dialogAreaPoints = List.of();
         } else {
             LocalMapAnnotations.addMarker(new LocalMapAnnotations.Marker(dialogX, dialogZ, name, color));
         }
@@ -523,6 +576,72 @@ public final class LedgeMapScreen extends Screen {
     private int mapZ(int top, int size, int worldZ) {
         return top + (int) ((worldZ - (centerZ - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
     }
+
+    private void appendAreaPoint(LocalMapAnnotations.Point point) {
+        if (areaPoints.size() >= 4096) return;
+        if (areaPoints.isEmpty() || !areaPoints.get(areaPoints.size() - 1).equals(point)) areaPoints.add(point);
+    }
+
+    private boolean hasThreeDistinctAreaPoints() {
+        if (areaPoints.stream().distinct().limit(3).count() < 3) return false;
+        var origin = areaPoints.get(0);
+        for (int i = 1; i + 1 < areaPoints.size(); i++) {
+            var first = areaPoints.get(i);
+            var second = areaPoints.get(i + 1);
+            long cross = (long) (first.x() - origin.x()) * (second.z() - origin.z())
+                    - (long) (first.z() - origin.z()) * (second.x() - origin.x());
+            if (cross != 0) return true;
+        }
+        return false;
+    }
+
+    private void drawPolygon(GuiGraphicsExtractor graphics, List<LocalMapAnnotations.Point> points,
+                            int left, int top, int size, int fillColor, int outlineColor, boolean filled) {
+        if (points == null || points.size() < 3) return;
+        List<ScreenPoint> polygon = points.stream()
+                .map(point -> new ScreenPoint(mapX(left, size, point.x()), mapZ(top, size, point.z())))
+                .toList();
+        if (filled) {
+            int minY = Math.max(top, polygon.stream().mapToInt(ScreenPoint::y).min().orElse(top));
+            int maxY = Math.min(top + size, polygon.stream().mapToInt(ScreenPoint::y).max().orElse(top));
+            int rowStep = Math.max(1, (maxY - minY + 127) / 128);
+            List<Integer> intersections = new ArrayList<>(polygon.size());
+            for (int y = minY; y < maxY; y += rowStep) {
+                intersections.clear();
+                for (int i = 0; i < polygon.size(); i++) {
+                    ScreenPoint a = polygon.get(i);
+                    ScreenPoint b = polygon.get((i + 1) % polygon.size());
+                    if ((a.y() <= y && b.y() > y) || (b.y() <= y && a.y() > y)) {
+                        intersections.add((int) Math.round(a.x() + (double) (y - a.y()) * (b.x() - a.x()) / (b.y() - a.y())));
+                    }
+                }
+                intersections.sort(Comparator.naturalOrder());
+                for (int i = 0; i + 1 < intersections.size(); i += 2) {
+                    int x1 = Math.max(left, intersections.get(i));
+                    int x2 = Math.min(left + size, intersections.get(i + 1));
+                    if (x2 > x1) graphics.fill(x1, y, x2, Math.min(y + rowStep, top + size), fillColor);
+                }
+            }
+        }
+        for (int i = 0; i < polygon.size(); i++) {
+            ScreenPoint a = polygon.get(i);
+            ScreenPoint b = polygon.get((i + 1) % polygon.size());
+            drawLine(graphics, a.x(), a.y(), b.x(), b.y(), outlineColor);
+        }
+    }
+
+    private void drawLine(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
+        int distance = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+        int step = Math.max(1, (distance + 1023) / 1024);
+        for (int i = 0; i <= distance; i += step) {
+            double ratio = distance == 0 ? 0 : (double) i / distance;
+            int x = (int) Math.round(x1 + (x2 - x1) * ratio);
+            int y = (int) Math.round(y1 + (y2 - y1) * ratio);
+            graphics.fill(x - 1, y - 1, x + 2, y + 2, color);
+        }
+    }
+
+    private record ScreenPoint(int x, int y) {}
 
     @Override
     public boolean isPauseScreen() {

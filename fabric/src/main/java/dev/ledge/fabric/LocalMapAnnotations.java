@@ -62,6 +62,17 @@ final class LocalMapAnnotations {
     }
 
     record Marker(int x, int z, String name, String color) {}
-    record Area(int minX, int minZ, int maxX, int maxZ, String name, String color, boolean filled) {}
+    record Point(int x, int z) {}
+    record Area(int minX, int minZ, int maxX, int maxZ, String name, String color, boolean filled, List<Point> points) {
+        Area(int minX, int minZ, int maxX, int maxZ, String name, String color, boolean filled) {
+            this(minX, minZ, maxX, maxZ, name, color, filled, List.of(
+                    new Point(minX, minZ), new Point(maxX, minZ), new Point(maxX, maxZ), new Point(minX, maxZ)));
+        }
+
+        Area {
+            points = points == null ? List.of() : List.copyOf(points);
+            if (points.size() > 4096) throw new IllegalArgumentException("an area can contain at most 4096 points");
+        }
+    }
     private record Snapshot(List<Marker> markers, List<Area> areas) {}
 }

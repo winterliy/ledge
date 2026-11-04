@@ -24,13 +24,13 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - Fabric requests server world settings and nearby tiles over the `ledge:map` play channel. PNG responses are split into bounded fragments, reassembled with transfer limits, and held in a capped, dimension-aware client texture cache.
 - The Fabric map follows the player by default, supports drag panning and wheel zoom (`0`–`12`), and reports hovered block X/Z plus player Y in a closable coordinate panel. Resolution and renderer follow the server's current-world settings.
 - The local player marker can be toggled from the map. Zoom works with the wheel and `−`/`+` buttons. The print control arms a drag selection and saves the selected screen region in the Minecraft `screenshots/` folder.
-- Right-click opens point and rectangle-area tools. Points accept a name and hex banner color; areas accept a name/color and can be translucent fills or outlines. These annotations persist locally per server and dimension in `config/ledge/annotations/`.
+- Right-click opens point and freeform-area tools. Points accept a name and hex banner color; areas accept a name/color and can be translucent fills or outlines. Hold Shift while drawing to add a straight segment from the last point. These annotations persist locally per server and dimension in `config/ledge/annotations/`.
 - The GLAP adapter retains bounded subscriptions to requested tiles and pushes a refreshed tile after server-side rendering completes.
 
 ### Known limitations
 
 - Fabric's controls for dimension and 2D/3D view are still to be built; renderer and resolution currently follow the server's current-world settings.
-- Fabric area drawing currently creates rectangles. Freeform pencil polygons and web/Fabric annotation synchronization are not implemented.
+- Web/Fabric annotation synchronization is not implemented.
 - The screenshot tool writes the selected region directly without a preview or confirmation.
 - The plugin-message channel requires both the GLAP plugin and Fabric mod on the same server connection. The web map remains plugin-only.
 - GLAP web view is a first pass. Its 3D mode is a visual tilt of the 2D canvas, not a true 3D terrain renderer.
@@ -44,7 +44,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 ## Next implementation steps
 
 1. Finish GLAP world rendering: biome/material map colors, cave sampling, 3D renderer, tile revision handling, and accurate per-world/dimension configuration.
-2. Add client controls for dimension and 2D/3D view, plus freeform polygon areas.
+2. Add client controls for dimension and 2D/3D view.
 3. Decide whether annotations should sync to the server and web map, then add that persistence path.
 4. Add screenshot preview/confirmation and runtime verification on a GLAP server and Fabric client; check live updates and Chunky operation.
 
