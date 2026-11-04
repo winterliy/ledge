@@ -22,20 +22,39 @@ public final class MapTileRenderers {
     }
 
     private static BufferedImage surface(MapBlockSample[] samples, MapResolution resolution) {
-        return compose(samples, resolution, (sample, index, width) -> {
-            int row = index / width;
-            int column = index % width;
-            int west = samples[row * width + Math.max(0, column - 1)].height();
-            int east = samples[row * width + Math.min(width - 1, column + 1)].height();
-            int north = samples[Math.max(0, row - 1) * width + column].height();
-            int south = samples[Math.min(width - 1, row + 1) * width + column].height();
-            double normalX = -(east - west) * 0.12;
-            double normalZ = -(south - north) * 0.12;
-            double inverseLength = 1.0 / Math.sqrt(normalX * normalX + normalZ * normalZ + 1.0);
-            double light = (normalX * -0.45 + 0.80 + normalZ * -0.40) * inverseLength;
-            int brightness = Math.max(118, Math.min(244, (int) Math.round(150 + light * 70)));
-            return shade(sample.mapColorArgb(), brightness);
-        });
+        Objects.requireNonNull(samples, "samples");
+        Objects.requireNonNull(resolution, "resolution");
+        int blocksPerSide = MapTileKey.TILE_SIZE / resolution.pixelsPerBlock();
+        int sampleSide = blocksPerSide + 2;
+        if (samples.length != sampleSide * sampleSide) {
+            throw new IllegalArgumentException("surface samples must include a one-block border");
+        }
+        BufferedImage image = new BufferedImage(MapTileKey.TILE_SIZE, MapTileKey.TILE_SIZE, BufferedImage.TYPE_INT_ARGB);
+        int pixelsPerBlock = resolution.pixelsPerBlock();
+        for (int blockZ = 0; blockZ < blocksPerSide; blockZ++) {
+            for (int blockX = 0; blockX < blocksPerSide; blockX++) {
+                int sampleIndex = (blockZ + 1) * sampleSide + blockX + 1;
+                MapBlockSample sample = samples[sampleIndex];
+                int west = samples[sampleIndex - 1].height();
+                int east = samples[sampleIndex + 1].height();
+                int north = samples[sampleIndex - sampleSide].height();
+                int south = samples[sampleIndex + sampleSide].height();
+                double normalX = -(east - west) * 0.12;
+                double normalZ = -(south - north) * 0.12;
+                double inverseLength = 1.0 / Math.sqrt(normalX * normalX + normalZ * normalZ + 1.0);
+                double light = (normalX * -0.45 + 0.80 + normalZ * -0.40) * inverseLength;
+                int brightness = Math.max(118, Math.min(244, (int) Math.round(150 + light * 70)));
+                int argb = shade(sample.mapColorArgb(), brightness);
+                int pixelX = blockX * pixelsPerBlock;
+                int pixelZ = blockZ * pixelsPerBlock;
+                for (int dz = 0; dz < pixelsPerBlock; dz++) {
+                    for (int dx = 0; dx < pixelsPerBlock; dx++) {
+                        image.setRGB(pixelX + dx, pixelZ + dz, argb);
+                    }
+                }
+            }
+        }
+        return image;
     }
 
     private static BufferedImage cave(MapBlockSample[] samples, MapResolution resolution) {

@@ -435,6 +435,7 @@ final class MapTileEngine extends BukkitRunnable {
         private final MapTileKey key;
         private final World world;
         private final MapBlockSample[] samples;
+        private final boolean[] loadedSamples;
         private final int side;
         private final long revision;
         private final long worldRevision;
@@ -446,8 +447,9 @@ final class MapTileEngine extends BukkitRunnable {
             this.revision = revision;
             WorldDimension worldDimension = new WorldDimension(key.worldId(), key.dimensionId());
             this.worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong()).get();
-            this.side = key.samplesPerSide();
+            this.side = key.samplesPerSide() + (key.renderer() == MapRendererType.SURFACE ? 2 : 0);
             this.samples = new MapBlockSample[side * side];
+            this.loadedSamples = new boolean[samples.length];
         }
 
         private int sample(int budget) {
@@ -456,9 +458,11 @@ final class MapTileEngine extends BukkitRunnable {
             while (index < samples.length && count < budget) {
                 int sampleX = index % side;
                 int sampleZ = index / side;
-                int x = key.minBlockX() + sampleX * spacing;
-                int z = key.minBlockZ() + sampleZ * spacing;
-                if (!world.isChunkLoaded(x >> 4, z >> 4)) {
+                int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
+                int x = key.minBlockX() + (sampleX - border) * spacing;
+                int z = key.minBlockZ() + (sampleZ - border) * spacing;
+                boolean loaded = world.isChunkLoaded(x >> 4, z >> 4);
+                if (!loaded) {
                     samples[index] = new MapBlockSample(0x00000000, world.getMinHeight(), false);
                 } else if (key.renderer() == MapRendererType.CAVE) {
                     Block surface = world.getHighestBlockAt(x, z);
@@ -472,10 +476,28 @@ final class MapTileEngine extends BukkitRunnable {
                     Block top = world.getHighestBlockAt(x, z);
                     samples[index] = new MapBlockSample(colorFor(top.getType(), top.getBiome().getKey().getKey()), top.getY(), false);
                 }
+                loadedSamples[index] = loaded;
                 index++;
                 count++;
             }
+            if (index >= samples.length && key.renderer() == MapRendererType.SURFACE) {
+                fillMissingBorderHeights();
+            }
             return count;
+        }
+
+        private void fillMissingBorderHeights() {
+            for (int sampleZ = 0; sampleZ < side; sampleZ++) {
+                for (int sampleX = 0; sampleX < side; sampleX++) {
+                    if (sampleX > 0 && sampleX < side - 1 && sampleZ > 0 && sampleZ < side - 1) continue;
+                    int index = sampleZ * side + sampleX;
+                    if (loadedSamples[index]) continue;
+                    int innerX = Math.max(1, Math.min(side - 2, sampleX));
+                    int innerZ = Math.max(1, Math.min(side - 2, sampleZ));
+                    int height = samples[innerZ * side + innerX].height();
+                    samples[index] = new MapBlockSample(0x00000000, height, false);
+                }
+            }
         }
 
         private boolean complete() {

@@ -14,12 +14,12 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 
 - Shared 256×256 PNG tile format with path-safe world/dimension identifiers, resolution levels (`LOW`, `STANDARD`, `HIGH`, `ULTRA`), and zoom levels.
 - Shared `SURFACE`, `FLAT`, and `CAVE` renderer choices, plus world configuration and marker/area data models.
-- Filesystem tile cache with atomic writes and image-size checks.
+- Filesystem tile cache with atomic writes, image-size checks, and versioned renderer paths so rendering improvements rebuild tiles without deleting the previous cache.
 - GLAP plugin web viewer on the configured port, bound to `127.0.0.1` by default. External binding requires `web.allow-external: true`.
 - Server-side tile sampling is incremental and limited per tick; image composition and PNG writes run on a bounded worker queue. Unloaded chunks are not force-loaded.
 - GLAP web map can select loaded worlds, renderer, resolution, 2D/3D view, and player-marker visibility. Player markers are currently simple dots.
 - The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent. Surface vegetation and water colors receive a biome-specific tint.
-- Surface tiles use height gradients from four neighbors to add directional relief shading shared by the web map and Fabric client.
+- Surface tiles use height gradients from four neighbors to add directional relief shading shared by the web map and Fabric client. A one-sample border reads adjacent loaded terrain so the shading does not stop at tile edges; unloaded border chunks reuse the nearest sampled height without force-loading.
 - Placing, breaking, burning, and explosion changes version the affected chunks instead of walking every cached zoom variant. Active Fabric subscriptions rerender, and cached inactive variants are checked against chunk versions on the next request.
 - Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
