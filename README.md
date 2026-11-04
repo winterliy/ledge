@@ -18,7 +18,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - GLAP plugin web viewer on the configured port, bound to `127.0.0.1` by default. External binding requires `web.allow-external: true`.
 - Server-side tile sampling is incremental and limited per tick; image composition and PNG writes run on a bounded worker queue. Unloaded chunks are not force-loaded.
 - GLAP web map can select loaded worlds, renderer, resolution, 2D/3D view, and player-marker visibility. Player markers are currently simple dots.
-- The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent.
+- The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent. Surface vegetation and water colors receive a biome-specific tint.
 - Placing, breaking, burning, and explosion changes invalidate affected surface tiles for live refresh.
 - Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
@@ -35,7 +35,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - The screenshot tool writes the selected region directly without a preview or confirmation.
 - The plugin-message channel requires both the GLAP plugin and Fabric mod on the same server connection. The web map remains plugin-only.
 - GLAP web view is a first pass. Its 3D mode is a visual tilt of the 2D canvas, not a true 3D terrain renderer.
-- Cave mode shows one fixed-height slice, not a complete 3D cave survey. The block palette is a basic material-name approximation, not Minecraft's full biome/texture map color system.
+- Cave mode shows one fixed-height slice, not a complete 3D cave survey. Biome tints improve the basic material palette but do not reproduce Minecraft's exact texture and map-color rules.
 - Web player markers are dots without skin-face icons. Chat, game time/date, and share links are intentionally omitted.
 - Client annotations are local and are not yet sent to the server or shown in the web map.
 - The renderer currently samples the top block of already-loaded columns. Chunky pre-generation is optional and is not automatically started by opening the map.

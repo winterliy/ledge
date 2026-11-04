@@ -287,6 +287,46 @@ final class MapTileEngine extends BukkitRunnable {
         return 0xffa08c72;
     }
 
+    private static int colorFor(Material material, String biomeKey) {
+        int base = colorFor(material);
+        String biome = biomeKey.toUpperCase(java.util.Locale.ROOT);
+        if (material.name().contains("WATER")) return tint(base, waterTint(biome));
+        if (material.name().contains("ICE")) return tint(base, biome.contains("FROZEN") ? 0xffc5e4ed : 0xffa7d4e6);
+        String block = material.name();
+        boolean vegetation = block.contains("LEAVES") || block.contains("MOSS") || block.contains("GRASS")
+                || block.contains("VINE") || block.contains("FERN") || block.contains("SAPLING");
+        if (!vegetation) return base;
+        if (biome.contains("SWAMP")) return tint(base, 0xff7a743c);
+        if (biome.contains("MANGROVE")) return tint(base, 0xff58964e);
+        if (biome.contains("BADLANDS") || biome.contains("SAVANNA") || biome.contains("DESERT")) {
+            return tint(base, 0xffc2a94d);
+        }
+        if (biome.contains("SNOW") || biome.contains("FROZEN") || biome.contains("GROVE")) {
+            return tint(base, 0xffa8c8ce);
+        }
+        if (biome.contains("JUNGLE") || biome.contains("BAMBOO")) return tint(base, 0xff63c45d);
+        if (biome.contains("TAIGA") || biome.contains("OLD_GROWTH_PINE")) return tint(base, 0xff6d9376);
+        if (biome.contains("CHERRY")) return tint(base, 0xffad9fbe);
+        if (biome.contains("DARK_FOREST")) return tint(base, 0xff6e9272);
+        return tint(base, 0xffa1c987);
+    }
+
+    private static int waterTint(String biome) {
+        if (biome.contains("WARM_OCEAN")) return 0xff67c9b7;
+        if (biome.contains("LUKEWARM")) return 0xff7bbec1;
+        if (biome.contains("FROZEN") || biome.contains("COLD")) return 0xffb2d5e5;
+        if (biome.contains("SWAMP") || biome.contains("MANGROVE")) return 0xff89965d;
+        if (biome.contains("DEEP")) return 0xff718db5;
+        return 0xff92b8d1;
+    }
+
+    private static int tint(int color, int tint) {
+        int red = ((color >>> 16) & 0xff) * ((tint >>> 16) & 0xff) / 255;
+        int green = ((color >>> 8) & 0xff) * ((tint >>> 8) & 0xff) / 255;
+        int blue = (color & 0xff) * (tint & 0xff) / 255;
+        return (color & 0xff000000) | (red << 16) | (green << 8) | blue;
+    }
+
     private final class Job {
         private final MapTileKey key;
         private final World world;
@@ -320,10 +360,10 @@ final class MapTileEngine extends BukkitRunnable {
                     Block above = world.getBlockAt(x, caveY + 1, z);
                     boolean underground = surface.getY() > caveY + 2;
                     boolean exposed = underground && floor.getType().isSolid() && !above.getType().isSolid();
-                    samples[index] = new MapBlockSample(colorFor(floor.getType()), caveY, exposed);
+                    samples[index] = new MapBlockSample(colorFor(floor.getType(), floor.getBiome().getKey().getKey()), caveY, exposed);
                 } else {
                     Block top = world.getHighestBlockAt(x, z);
-                    samples[index] = new MapBlockSample(colorFor(top.getType()), top.getY(), false);
+                    samples[index] = new MapBlockSample(colorFor(top.getType(), top.getBiome().getKey().getKey()), top.getY(), false);
                 }
                 index++;
                 count++;
