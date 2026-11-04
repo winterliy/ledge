@@ -24,11 +24,17 @@ public final class MapTileRenderers {
     private static BufferedImage surface(MapBlockSample[] samples, MapResolution resolution) {
         return compose(samples, resolution, (sample, index, width) -> {
             int row = index / width;
-            int previousRow = Math.max(0, row - 1);
-            int neighborIndex = previousRow * width + (index % width);
-            int slope = sample.height() - samples[neighborIndex].height();
-            int shade = Math.max(150, Math.min(255, 210 + slope * 6));
-            return shade(sample.mapColorArgb(), shade);
+            int column = index % width;
+            int west = samples[row * width + Math.max(0, column - 1)].height();
+            int east = samples[row * width + Math.min(width - 1, column + 1)].height();
+            int north = samples[Math.max(0, row - 1) * width + column].height();
+            int south = samples[Math.min(width - 1, row + 1) * width + column].height();
+            double normalX = -(east - west) * 0.12;
+            double normalZ = -(south - north) * 0.12;
+            double inverseLength = 1.0 / Math.sqrt(normalX * normalX + normalZ * normalZ + 1.0);
+            double light = (normalX * -0.45 + 0.80 + normalZ * -0.40) * inverseLength;
+            int brightness = Math.max(118, Math.min(244, (int) Math.round(150 + light * 70)));
+            return shade(sample.mapColorArgb(), brightness);
         });
     }
 

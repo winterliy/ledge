@@ -19,6 +19,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - Server-side tile sampling is incremental and limited per tick; image composition and PNG writes run on a bounded worker queue. Unloaded chunks are not force-loaded.
 - GLAP web map can select loaded worlds, renderer, resolution, 2D/3D view, and player-marker visibility. Player markers are currently simple dots.
 - The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent. Surface vegetation and water colors receive a biome-specific tint.
+- Surface tiles use height gradients from four neighbors to add directional relief shading shared by the web map and Fabric client.
 - Placing, breaking, burning, and explosion changes version the affected chunks instead of walking every cached zoom variant. Active Fabric subscriptions rerender, and cached inactive variants are checked against chunk versions on the next request.
 - Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
@@ -31,7 +32,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 
 ### Known limitations
 
-- Fabric's 3D mode is a visual tilt of the 2D map, not terrain geometry. Renderer and resolution follow the selected target's server configuration.
+- The 2D/3D toggle still tilts the map view; terrain relief is currently conveyed by shared height shading rather than geometric projection. Renderer and resolution follow the selected target's server configuration.
 - The screenshot tool writes the selected region directly without a preview or confirmation.
 - The plugin-message channel requires both the GLAP plugin and Fabric mod on the same server connection. The web map remains plugin-only.
 - GLAP web view is a first pass. Its 3D mode is a visual tilt of the 2D canvas, not a true 3D terrain renderer.
@@ -44,7 +45,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 
 ## Next implementation steps
 
-1. Improve GLAP world rendering with biome/material colors and a true terrain projection.
+1. Add a shared geometric terrain projection and improve the material palette beyond heuristic biome tints.
 2. Add screenshot preview/confirmation and runtime verification on a GLAP server and Fabric client; check live updates and Chunky operation.
 
 ## Requirements
