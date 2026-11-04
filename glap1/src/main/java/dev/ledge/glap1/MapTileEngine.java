@@ -39,7 +39,12 @@ final class MapTileEngine extends BukkitRunnable {
     private final Map<MapTileKey, Job> queued = new ConcurrentHashMap<>();
     private final Set<MapTileKey> rendering = ConcurrentHashMap.newKeySet();
     private final Set<MapTileKey> dirty = ConcurrentHashMap.newKeySet();
+    private final Set<MapTileKey> subscribedTiles = ConcurrentHashMap.newKeySet();
     private final Map<MapTileKey, AtomicLong> revisions = new ConcurrentHashMap<>();
+    private final Map<WorldDimension, AtomicLong> worldRevisions = new ConcurrentHashMap<>();
+    private final Map<WorldDimension, AtomicLong> coarseRevisions = new ConcurrentHashMap<>();
+    private final Map<WorldDimension, Map<Long, Long>> changedChunks = new ConcurrentHashMap<>();
+    private final Map<MapTileKey, Long> tileRevisions = new ConcurrentHashMap<>();
     private final Map<MapTileKey, java.util.concurrent.CopyOnWriteArraySet<java.util.function.Consumer<byte[]>>> readyCallbacks = new ConcurrentHashMap<>();
     private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.BiConsumer<MapTileKey, byte[]>> tileListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean closed;
@@ -61,14 +66,8 @@ final class MapTileEngine extends BukkitRunnable {
     }
 
     Optional<BufferedImage> read(MapTileKey key) throws IOException {
-        if (dirty.contains(key)) {
-            request(key);
-            return Optional.empty();
-        }
-        Optional<BufferedImage> image = store.read(key);
-        if (image.isEmpty()) {
-            request(key);
-        }
+        Optional<BufferedImage> image = readFresh(key);
+        if (image.isEmpty()) request(key);
         return image;
     }
 
@@ -78,7 +77,7 @@ final class MapTileEngine extends BukkitRunnable {
         try {
             renderer.execute(() -> {
                 try {
-                    Optional<BufferedImage> image = dirty.contains(key) ? Optional.empty() : store.read(key);
+                    Optional<BufferedImage> image = readFresh(key);
                     if (image.isPresent()) {
                         byte[] png = encodePng(image.get());
                         Bukkit.getScheduler().runTask(plugin, () -> deliver(key, png));
@@ -115,6 +114,14 @@ final class MapTileEngine extends BukkitRunnable {
         tileListeners.remove(listener);
     }
 
+    void addSubscription(MapTileKey key) {
+        subscribedTiles.add(key);
+    }
+
+    void removeSubscription(MapTileKey key) {
+        subscribedTiles.remove(key);
+    }
+
     void request(MapTileKey key) {
         if (closed) return;
         if (!Bukkit.isPrimaryThread()) {
@@ -136,18 +143,43 @@ final class MapTileEngine extends BukkitRunnable {
     }
 
     void invalidate(World world, int blockX, int blockZ) {
-        MapWorldConfig config = configFor(world);
-        MapTileKey key = MapTileKey.atBlock(
-                worldId(world), dimensionId(world), config.renderer(), config.resolution(), 0, blockX, blockZ
-        );
-        dirty.add(key);
-        revisions.computeIfAbsent(key, ignored -> new AtomicLong()).incrementAndGet();
-        if (queued.containsKey(key)) {
-            return;
+        String targetWorld = worldId(world);
+        String targetDimension = dimensionId(world);
+        WorldDimension worldDimension = new WorldDimension(targetWorld, targetDimension);
+        AtomicLong worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong());
+        long changeRevision;
+        boolean fullWorldInvalidation;
+        synchronized (worldRevision) {
+            changeRevision = worldRevision.incrementAndGet();
+            long chunkKey = pack(Math.floorDiv(blockX, 16), Math.floorDiv(blockZ, 16));
+            Map<Long, Long> chunks = changedChunks.computeIfAbsent(worldDimension, ignored -> new ConcurrentHashMap<>());
+            chunks.put(chunkKey, changeRevision);
+            fullWorldInvalidation = chunks.size() > 4096;
+            if (fullWorldInvalidation) {
+                chunks.clear();
+                coarseRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong()).set(changeRevision);
+            }
         }
-        Job job = new Job(key, world, revision(key));
-        if (queued.putIfAbsent(key, job) == null) {
-            pending.add(job);
+
+        Set<MapTileKey> affected = ConcurrentHashMap.newKeySet();
+        subscribedTiles.stream().filter(key -> contains(key, worldDimension, blockX, blockZ)).forEach(affected::add);
+        readyCallbacks.keySet().stream().filter(key -> contains(key, worldDimension, blockX, blockZ)).forEach(affected::add);
+        queued.keySet().stream().filter(key -> contains(key, worldDimension, blockX, blockZ)).forEach(affected::add);
+        MapWorldConfig config = configFor(world);
+        MapTileKey defaultTile = MapTileKey.atBlock(targetWorld, targetDimension, config.renderer(),
+                config.resolution(), 0, blockX, blockZ);
+        affected.add(defaultTile);
+        if (fullWorldInvalidation) {
+            subscribedTiles.stream().filter(key -> matches(key, worldDimension)).forEach(affected::add);
+            readyCallbacks.keySet().stream().filter(key -> matches(key, worldDimension)).forEach(affected::add);
+            queued.keySet().stream().filter(key -> matches(key, worldDimension)).forEach(affected::add);
+        }
+        for (MapTileKey key : affected) {
+            dirty.add(key);
+            revisions.computeIfAbsent(key, ignored -> new AtomicLong()).incrementAndGet();
+            if (key.equals(defaultTile) || subscribedTiles.contains(key) || readyCallbacks.containsKey(key)) {
+                enqueueJob(key, world);
+            }
         }
     }
 
@@ -168,6 +200,70 @@ final class MapTileEngine extends BukkitRunnable {
                 return;
             }
         }
+    }
+
+    private void enqueueJob(MapTileKey key, World world) {
+        if (closed || queued.containsKey(key)) return;
+        Job job = new Job(key, world, revision(key));
+        if (queued.putIfAbsent(key, job) == null) pending.add(job);
+    }
+
+    private Optional<BufferedImage> readFresh(MapTileKey key) throws IOException {
+        if (dirty.contains(key)) return Optional.empty();
+        WorldDimension worldDimension = new WorldDimension(key.worldId(), key.dimensionId());
+        AtomicLong worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong());
+        long observedRevision;
+        synchronized (worldRevision) {
+            observedRevision = worldRevision.get();
+            if (dirty.contains(key) || isStale(key, worldDimension, observedRevision)) return Optional.empty();
+        }
+        Optional<BufferedImage> image = store.read(key);
+        if (image.isEmpty()) return image;
+        synchronized (worldRevision) {
+            long currentRevision = worldRevision.get();
+            if (dirty.contains(key) || isStale(key, worldDimension, currentRevision)) return Optional.empty();
+            tileRevisions.merge(key, currentRevision, Math::max);
+        }
+        return image;
+    }
+
+    private boolean isStale(MapTileKey key, WorldDimension worldDimension, long currentRevision) {
+        long coarse = coarseRevisions.getOrDefault(worldDimension, new AtomicLong()).get();
+        long renderedAt = tileRevisions.getOrDefault(key, coarse);
+        if (renderedAt < coarse) return true;
+        if (renderedAt >= currentRevision) return false;
+        Map<Long, Long> chunks = changedChunks.get(worldDimension);
+        if (chunks == null || chunks.isEmpty()) return false;
+        int minChunkX = Math.floorDiv(key.minBlockX(), 16);
+        int minChunkZ = Math.floorDiv(key.minBlockZ(), 16);
+        int maxChunkX = (int) Math.floorDiv((long) key.minBlockX() + key.blocksPerTile() - 1, 16L);
+        int maxChunkZ = (int) Math.floorDiv((long) key.minBlockZ() + key.blocksPerTile() - 1, 16L);
+        long width = (long) maxChunkX - minChunkX + 1;
+        long depth = (long) maxChunkZ - minChunkZ + 1;
+        if (width * depth > 4096) return true;
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                if (chunks.getOrDefault(pack(chunkX, chunkZ), 0L) > renderedAt) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean matches(MapTileKey key, WorldDimension worldDimension) {
+        return key.worldId().equals(worldDimension.worldId())
+                && key.dimensionId().equals(worldDimension.dimensionId());
+    }
+
+    private static boolean contains(MapTileKey key, WorldDimension worldDimension, int blockX, int blockZ) {
+        if (!matches(key, worldDimension)) return false;
+        long minX = key.minBlockX();
+        long minZ = key.minBlockZ();
+        return blockX >= minX && blockZ >= minZ
+                && blockX < minX + key.blocksPerTile() && blockZ < minZ + key.blocksPerTile();
+    }
+
+    private static long pack(int x, int z) {
+        return ((long) x << 32) | (z & 0xffffffffL);
     }
 
     void shutdown() {
@@ -236,7 +332,15 @@ final class MapTileEngine extends BukkitRunnable {
                     BufferedImage image = MapTileRenderers.forType(job.key.renderer())
                             .render(job.samples, job.key.resolution());
                     store.write(job.key, image);
-                    if (revision(job.key) == job.revision) {
+                    tileRevisions.put(job.key, job.worldRevision);
+                    WorldDimension worldDimension = new WorldDimension(job.key.worldId(), job.key.dimensionId());
+                    AtomicLong worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong());
+                    boolean fresh;
+                    synchronized (worldRevision) {
+                        fresh = revision(job.key) == job.revision
+                                && !isStale(job.key, worldDimension, worldRevision.get());
+                    }
+                    if (fresh) {
                         dirty.remove(job.key);
                         if (readyCallbacks.containsKey(job.key) || !tileListeners.isEmpty()) {
                             byte[] png = encodePng(image);
@@ -333,12 +437,15 @@ final class MapTileEngine extends BukkitRunnable {
         private final MapBlockSample[] samples;
         private final int side;
         private final long revision;
+        private final long worldRevision;
         private int index;
 
         private Job(MapTileKey key, World world, long revision) {
             this.key = key;
             this.world = world;
             this.revision = revision;
+            WorldDimension worldDimension = new WorldDimension(key.worldId(), key.dimensionId());
+            this.worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong()).get();
             this.side = key.samplesPerSide();
             this.samples = new MapBlockSample[side * side];
         }
@@ -381,4 +488,6 @@ final class MapTileEngine extends BukkitRunnable {
         int max = world.getMaxHeight() - 1;
         return Math.max(min + 1, Math.min(max - 1, min + (max - min) / 4));
     }
+
+    private record WorldDimension(String worldId, String dimensionId) {}
 }

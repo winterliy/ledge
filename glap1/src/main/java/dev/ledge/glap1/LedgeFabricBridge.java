@@ -50,6 +50,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         Bukkit.getMessenger().unregisterIncomingPluginChannel(plugin, CHANNEL, this);
         Bukkit.getMessenger().unregisterOutgoingPluginChannel(plugin, CHANNEL);
         tiles.removeTileListener(tileListener);
+        subscribers.keySet().forEach(tiles::removeSubscription);
         subscribers.clear();
         playerTiles.clear();
         requests.clear();
@@ -126,9 +127,15 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         UUID id = event.getPlayer().getUniqueId();
         requests.remove(id);
         activeClients.remove(id);
-        subscribers.values().forEach(ids -> ids.remove(id));
-        subscribers.entrySet().removeIf(entry -> entry.getValue().isEmpty());
-        playerTiles.remove(id);
+        var keys = playerTiles.remove(id);
+        if (keys != null) {
+            for (MapTileKey key : keys) {
+                var ids = subscribers.get(key);
+                if (ids == null) continue;
+                ids.remove(id);
+                if (ids.isEmpty() && subscribers.remove(key, ids)) tiles.removeSubscription(key);
+            }
+        }
     }
 
     @EventHandler
@@ -145,7 +152,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
             var ids = subscribers.get(key);
             if (ids == null) continue;
             ids.remove(playerId);
-            if (ids.isEmpty()) subscribers.remove(key, ids);
+            if (ids.isEmpty() && subscribers.remove(key, ids)) tiles.removeSubscription(key);
         }
     }
 
@@ -153,6 +160,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         var keys = playerTiles.computeIfAbsent(playerId, ignored -> ConcurrentHashMap.newKeySet());
         if (!keys.add(key)) return;
         subscribers.computeIfAbsent(key, ignored -> ConcurrentHashMap.newKeySet()).add(playerId);
+        tiles.addSubscription(key);
         if (keys.size() > 64) {
             var iterator = keys.iterator();
             if (iterator.hasNext()) {
@@ -161,7 +169,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
                 var ids = subscribers.get(expired);
                 if (ids != null) {
                     ids.remove(playerId);
-                    if (ids.isEmpty()) subscribers.remove(expired, ids);
+                    if (ids.isEmpty() && subscribers.remove(expired, ids)) tiles.removeSubscription(expired);
                 }
             }
         }

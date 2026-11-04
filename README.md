@@ -19,7 +19,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - Server-side tile sampling is incremental and limited per tick; image composition and PNG writes run on a bounded worker queue. Unloaded chunks are not force-loaded.
 - GLAP web map can select loaded worlds, renderer, resolution, 2D/3D view, and player-marker visibility. Player markers are currently simple dots.
 - The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent. Surface vegetation and water colors receive a biome-specific tint.
-- Placing, breaking, burning, and explosion changes invalidate affected surface tiles for live refresh.
+- Placing, breaking, burning, and explosion changes version the affected chunks instead of walking every cached zoom variant. Active Fabric subscriptions rerender, and cached inactive variants are checked against chunk versions on the next request.
 - Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
 - Fabric requests server world settings and nearby tiles over the `ledge:map` play channel. PNG responses are split into bounded fragments, reassembled with transfer limits, and held in a capped, world/dimension-aware client texture cache.
