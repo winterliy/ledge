@@ -25,17 +25,17 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
 - Fabric requests server world settings and nearby tiles over the `ledge:map` play channel. PNG responses are split into bounded fragments, reassembled with transfer limits, and held in a capped, world/dimension-aware client texture cache.
 - Fabric can cycle through the server's loaded world/dimension targets from the map header. Each request is limited to tiles within eight tile steps of the player's coordinates, and uses that target's configured renderer and resolution.
-- The Fabric map follows the player by default, supports drag panning and wheel zoom (`0`–`12`), and reports hovered block X/Z plus player Y in a closable coordinate panel. Its `2D`/`3D` button switches between a flat map and a vertically tilted map view. Resolution and renderer follow the selected target's server settings.
+- The Fabric map follows the player by default, supports drag panning and wheel zoom (`0`–`12`), and reports hovered block X/Z plus player Y in a closable coordinate panel. Its `2D`/`3D` button switches between a flat map and an isometric diamond-tile projection. Resolution and renderer follow the selected target's server settings.
 - The local player marker can be toggled from the map. Zoom works with the wheel and `−`/`+` buttons. The print control arms a drag selection and saves the selected screen region in the Minecraft `screenshots/` folder.
 - Right-click opens point and freeform-area tools. Points accept a name and hex banner color; areas accept a name/color and can be translucent fills or outlines. Hold Shift while drawing to add a straight segment from the last point. These annotations persist locally per server, world, and dimension in `config/ledge/annotations/`.
 - The GLAP adapter retains bounded subscriptions to requested tiles and pushes a refreshed tile after server-side rendering completes.
 
 ### Known limitations
 
-- The 2D/3D toggle still tilts the map view; terrain relief is currently conveyed by shared height shading rather than geometric projection. Renderer and resolution follow the selected target's server configuration.
+- The isometric projection places the same square map tiles in a diamond grid in both clients. Surface relief is conveyed by shared height shading; terrain elevation is not yet extruded into full 3D geometry. Renderer and resolution follow the selected target's server configuration.
 - The screenshot tool writes the selected region directly without a preview or confirmation.
 - The plugin-message channel requires both the GLAP plugin and Fabric mod on the same server connection. The web map remains plugin-only.
-- GLAP web view is a first pass. Its 3D mode is a visual tilt of the 2D canvas, not a true 3D terrain renderer.
+- GLAP web view is a first pass. Its 3D mode uses an isometric tile projection, not a true 3D terrain renderer.
 - Cave mode shows one fixed-height slice, not a complete 3D cave survey. Biome tints improve the basic material palette but do not reproduce Minecraft's exact texture and map-color rules.
 - Web player markers are dots without skin-face icons. Chat, game time/date, and share links are intentionally omitted.
 - Client annotations are local and are not yet sent to the server or shown in the web map.
@@ -45,7 +45,7 @@ This is an **early development preview (`0.1.0-alpha.1`)**, not a complete map p
 
 ## Next implementation steps
 
-1. Add a shared geometric terrain projection and improve the material palette beyond heuristic biome tints.
+1. Add elevation-aware terrain geometry to the isometric view and improve the material palette beyond heuristic biome tints.
 2. Add screenshot preview/confirmation and runtime verification on a GLAP server and Fabric client; check live updates and Chunky operation.
 
 ## Requirements

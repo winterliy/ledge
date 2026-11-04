@@ -26,22 +26,28 @@
     function tileUrl(tx,tz){const q=new URLSearchParams({world:world.world,dimension:world.dimension,renderer:rendererSelect.value,resolution:resolutionSelect.value,zoom:String(zoomLevel()),x:String(tx),z:String(tz)});return '/tiles?'+q.toString()}
     function draw(){if(!ctx||!canvas.width)return;const w=canvas.clientWidth,h=canvas.clientHeight,dpr=canvas.width/w;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);if(!world)return;
       const span=tileSpan(),tilePx=256*scale,cx=Math.floor(cameraX/span),cz=Math.floor(cameraZ/span),offsetX=(cameraX-cx*span)/span*tilePx,offsetZ=(cameraZ-cz*span)/span*tilePx;
-      for(let dz=-Math.ceil(h/tilePx/2)-1;dz<=Math.ceil(h/tilePx/2)+1;dz++)for(let dx=-Math.ceil(w/tilePx/2)-1;dx<=Math.ceil(w/tilePx/2)+1;dx++){
-        const tx=cx+dx,tz=cz+dz,key=tx+','+tz,px=w/2+dx*tilePx-offsetX,pz=h/2+dz*tilePx-offsetZ;let entry=lastTiles.get(key);if(!entry){entry={image:new Image(),loading:false,loaded:false,retryAt:0};lastTiles.set(key,entry)}
+      const drawTile=(dx,dz)=>{
+        const tx=cx+dx,tz=cz+dz,key=tx+','+tz;
+        const px=projection3d?w/2+((dx*tilePx-offsetX)-(dz*tilePx-offsetZ))/2:w/2+dx*tilePx-offsetX;
+        const pz=projection3d?h/2+((dx*tilePx-offsetX)+(dz*tilePx-offsetZ))/4:h/2+dz*tilePx-offsetZ;
+        if(projection3d&&(px+tilePx/2<0||px-tilePx/2>w||pz+tilePx/2<0||pz>h))return;
+        let entry=lastTiles.get(key);if(!entry){entry={image:new Image(),loading:false,loaded:false,retryAt:0};lastTiles.set(key,entry)}
         if(!entry.loading&&!entry.loaded&&Date.now()>=entry.retryAt){entry.loading=true;entry.image.onload=()=>{entry.loading=false;entry.loaded=true;draw()};entry.image.onerror=async()=>{entry.loading=false;const response=await fetch(tileUrl(tx,tz),{cache:'no-store'});if(response.status===202){status.textContent='Rendering tiles…';entry.retryAt=Date.now()+800}else if(response.ok){entry.image.src=tileUrl(tx,tz)+'&v='+Date.now();return}else{status.textContent='Map tile unavailable';entry.retryAt=Date.now()+5000}setTimeout(draw,Math.max(10,entry.retryAt-Date.now()))};entry.image.src=tileUrl(tx,tz)+'&v='+Date.now()}
-        if(entry.loaded)ctx.drawImage(entry.image,px,pz,tilePx,tilePx)
-      }
-      if(document.querySelector('#players').checked)for(const p of players){if(p.world!==world.world||p.dimension!==world.dimension)continue;const px=w/2+(p.x-cameraX)*256/(span/scale),pz=h/2+(p.z-cameraZ)*256/(span/scale);if(px>-30&&pz>-30&&px<w+30&&pz<h+30){ctx.fillStyle='#f3c76b';ctx.beginPath();ctx.arc(px,pz,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='12px system-ui';ctx.fillText(p.name,px+8,pz+4)}}
+        if(entry.loaded){if(projection3d){ctx.save();ctx.setTransform(dpr*scale/2,dpr*scale/4,-dpr*scale/2,dpr*scale/4,dpr*px,dpr*pz);ctx.drawImage(entry.image,0,0,256,256);ctx.restore()}else ctx.drawImage(entry.image,px,pz,tilePx,tilePx)}
+      };
+      if(projection3d){const xRange=Math.ceil(w/tilePx)+2,yRange=Math.ceil(2*h/tilePx)+2;for(let p=-xRange;p<=xRange;p++)for(let q=-yRange;q<=yRange;q++){if((p+q)%2!==0)continue;drawTile((p+q)/2,(q-p)/2)}}
+      else{const radius=Math.ceil(Math.max(w,h)/tilePx/2)+1;for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++)drawTile(dx,dz)}
+      if(document.querySelector('#players').checked)for(const p of players){if(p.world!==world.world||p.dimension!==world.dimension)continue;const dx=(p.x-cameraX)*tilePx/span,dz=(p.z-cameraZ)*tilePx/span,px=projection3d?w/2+(dx-dz)/2:w/2+dx,pz=projection3d?h/2+(dx+dz)/4:h/2+dz;if(px>-30&&pz>-30&&px<w+30&&pz<h+30){ctx.fillStyle='#f3c76b';ctx.beginPath();ctx.arc(px,pz,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='12px system-ui';ctx.fillText(p.name,px+8,pz+4)}}
       status.textContent=`${world.label} · ${rendererSelect.value} · ${resolutionSelect.value} · ${Math.round(scale*100)}%`
     }
     function setWorld(){world=JSON.parse(worldSelect.value);cameraX=world.x;cameraZ=world.z;lastTiles.clear();draw()}
     worldSelect.addEventListener('change',setWorld);for(const el of [rendererSelect,resolutionSelect])el.addEventListener('change',()=>{lastTiles.clear();draw()});
-    document.querySelector('#projection').addEventListener('click',e=>{projection3d=!projection3d;canvas.style.transform=projection3d?'perspective(1100px) rotateX(22deg)':'none';e.currentTarget.textContent=projection3d?'3D':'2D'});
+    document.querySelector('#projection').addEventListener('click',e=>{projection3d=!projection3d;e.currentTarget.textContent=projection3d?'3D':'2D';draw()});
     document.querySelector('#zoomIn').onclick=()=>zoomAt(scale*1.35);document.querySelector('#zoomOut').onclick=()=>zoomAt(scale/1.35);document.querySelector('#center').onclick=()=>{cameraX=world.x;cameraZ=world.z;draw()};
     function zoomAt(next){scale=Math.max(.125,Math.min(4,next));lastTiles.clear();draw()}
     canvas.addEventListener('wheel',e=>{e.preventDefault();zoomAt(scale*(e.deltaY<0?1.15:1/1.15))},{passive:false});
     canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,z:e.clientY,cx:cameraX,cz:cameraZ};canvas.setPointerCapture(e.pointerId);canvas.classList.add('dragging')});
-    canvas.addEventListener('pointermove',e=>{if(!drag)return;const span=tileSpan()/scale/256;cameraX=drag.cx-(e.clientX-drag.x)*span;cameraZ=drag.cz-(e.clientY-drag.z)*span;draw()});
+    canvas.addEventListener('pointermove',e=>{if(!drag)return;const span=tileSpan(),pixelsPerBlock=256*scale/span,dx=e.clientX-drag.x,dz=e.clientY-drag.z;if(projection3d){cameraX=drag.cx-(dx+2*dz)/pixelsPerBlock;cameraZ=drag.cz-(-dx+2*dz)/pixelsPerBlock}else{cameraX=drag.cx-dx/pixelsPerBlock;cameraZ=drag.cz-dz/pixelsPerBlock}draw()});
     canvas.addEventListener('pointerup',()=>{drag=null;canvas.classList.remove('dragging')});
     async function refreshPlayers(){try{players=await fetch('/api/players',{cache:'no-store'}).then(r=>r.json());draw()}catch{}}
     async function refreshTiles(){lastTiles.clear();draw();refreshPlayers()}

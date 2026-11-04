@@ -247,10 +247,11 @@ public final class LedgeMapScreen extends Screen {
             int worldX;
             int worldZ;
             var pos = minecraft.player.blockPosition();
-            double mapMouseY = unprojectMapY(mouseY, top, mapSize);
-            if (mouseX >= left && mouseX < left + tileSize * 3 && mapMouseY >= top && mapMouseY < top + tileSize * 3) {
-                worldX = (centerX - 1) * tileBlocks() + (int) ((mouseX - left) * tileBlocks() * 3.0 / (tileSize * 3));
-                worldZ = (centerZ - 1) * tileBlocks() + (int) ((mapMouseY - top) * tileBlocks() * 3.0 / (tileSize * 3));
+            MapPosition mapMouse = unprojectMapPosition(mouseX, mouseY, left, top, mapSize);
+            if (mapMouse.x() >= left && mapMouse.x() < left + mapSize
+                    && mapMouse.y() >= top && mapMouse.y() < top + mapSize) {
+                worldX = (centerX - 1) * tileBlocks() + (int) ((mapMouse.x() - left) * tileBlocks() * 3.0 / mapSize);
+                worldZ = (centerZ - 1) * tileBlocks() + (int) ((mapMouse.y() - top) * tileBlocks() * 3.0 / mapSize);
             } else {
                 worldX = pos.getX();
                 worldZ = pos.getZ();
@@ -286,8 +287,8 @@ public final class LedgeMapScreen extends Screen {
                 if (straightEndpoint == null) {
                     var last = preview.get(preview.size() - 1);
                     drawLine(graphics, mapX(left, mapSize, last.x()), mapZ(top, mapSize, last.z()),
-                            mapX(left, mapSize, mapWorldX(left, mapSize, mouseX)),
-                            mapZ(top, mapSize, mapWorldZ(top, mapSize, mouseY)), 0xff66b1ff);
+                            mapX(left, mapSize, mapWorldX(left, top, mapSize, mouseX, mouseY)),
+                            mapZ(top, mapSize, mapWorldZ(left, top, mapSize, mouseX, mouseY)), 0xff66b1ff);
                 }
             }
             graphics.pose().popMatrix();
@@ -358,8 +359,8 @@ public final class LedgeMapScreen extends Screen {
             contextMenuX = Math.min((int) x, width - 160);
             contextMenuY = Math.min((int) y, height - 76);
             int size = mapSize();
-            contextWorldX = mapWorldX((width - size) / 2, size, (int) x);
-            contextWorldZ = mapWorldZ((height - size) / 2, size, (int) y);
+            contextWorldX = mapWorldX((width - size) / 2, (height - size) / 2, size, (int) x, (int) y);
+            contextWorldZ = mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) x, (int) y);
             return true;
         }
         if (contextMenuVisible && event.button() == 0) {
@@ -395,8 +396,8 @@ public final class LedgeMapScreen extends Screen {
                 selectionStartY = selectionEndY = y;
                 int size = mapSize();
                 areaPoints.add(new LocalMapAnnotations.Point(
-                        mapWorldX((width - size) / 2, size, (int) x),
-                        mapWorldZ((height - size) / 2, size, (int) y)));
+                        mapWorldX((width - size) / 2, (height - size) / 2, size, (int) x, (int) y),
+                        mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) x, (int) y)));
                 lastAreaSampleX = x;
                 lastAreaSampleY = y;
                 return true;
@@ -419,8 +420,8 @@ public final class LedgeMapScreen extends Screen {
             selectionEndY = event.y();
             int size = mapSize();
             var point = new LocalMapAnnotations.Point(
-                    mapWorldX((width - size) / 2, size, (int) event.x()),
-                    mapWorldZ((height - size) / 2, size, (int) event.y()));
+                    mapWorldX((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()),
+                    mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()));
             if (minecraft.hasShiftDown()) {
                 straightEndpoint = point;
                 return true;
@@ -444,9 +445,15 @@ public final class LedgeMapScreen extends Screen {
             return true;
         }
         if (!dragging) return super.mouseDragged(event, deltaX, deltaY);
-        dragX += event.x() - lastMouseX;
-        double verticalScale = threeDimensional ? 0.70 : 1.0;
-        dragY += (event.y() - lastMouseY) / verticalScale;
+        double screenDeltaX = event.x() - lastMouseX;
+        double screenDeltaY = event.y() - lastMouseY;
+        if (threeDimensional) {
+            dragX += screenDeltaX + 2.0 * screenDeltaY;
+            dragY += -screenDeltaX + 2.0 * screenDeltaY;
+        } else {
+            dragX += screenDeltaX;
+            dragY += screenDeltaY;
+        }
         lastMouseX = event.x();
         lastMouseY = event.y();
         int mapSize = Math.min(height - 36, width - 300);
@@ -469,8 +476,8 @@ public final class LedgeMapScreen extends Screen {
             selectingArea = false;
             int size = mapSize();
             var end = new LocalMapAnnotations.Point(
-                    mapWorldX((width - size) / 2, size, (int) event.x()),
-                    mapWorldZ((height - size) / 2, size, (int) event.y()));
+                    mapWorldX((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()),
+                    mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()));
             if (minecraft.hasShiftDown()) {
                 straightEndpoint = end;
                 appendAreaPoint(straightEndpoint);
@@ -629,32 +636,39 @@ public final class LedgeMapScreen extends Screen {
         int size = mapSize();
         int left = (width - size) / 2;
         int top = (height - size) / 2;
-        double mapY = unprojectMapY(y, top, size);
-        return x >= left && x < left + size && mapY >= top && mapY < top + size;
+        MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
+        return mapPosition.x() >= left && mapPosition.x() < left + size
+                && mapPosition.y() >= top && mapPosition.y() < top + size;
     }
 
-    private int mapWorldX(int left, int size, int x) {
-        return (centerX - 1) * tileBlocks() + (int) ((x - left) * tileBlocks() * 3.0 / size);
+    private int mapWorldX(int left, int top, int size, int x, int y) {
+        MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
+        return (centerX - 1) * tileBlocks() + (int) ((mapPosition.x() - left) * tileBlocks() * 3.0 / size);
     }
 
-    private int mapWorldZ(int top, int size, int y) {
-        double mapY = unprojectMapY(y, top, size);
-        return (centerZ - 1) * tileBlocks() + (int) ((mapY - top) * tileBlocks() * 3.0 / size);
+    private int mapWorldZ(int left, int top, int size, int x, int y) {
+        MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
+        return (centerZ - 1) * tileBlocks() + (int) ((mapPosition.y() - top) * tileBlocks() * 3.0 / size);
     }
 
-    private double unprojectMapY(double screenY, int top, int size) {
-        if (!threeDimensional) return screenY;
+    private MapPosition unprojectMapPosition(double screenX, double screenY, int left, int top, int size) {
+        if (!threeDimensional) return new MapPosition(screenX, screenY);
+        double centerX = left + size / 2.0;
         double centerY = top + size / 2.0;
-        return centerY + (screenY - centerY) / 0.70;
+        double dx = screenX - centerX;
+        double dy = screenY - centerY;
+        return new MapPosition(centerX + dx + 2.0 * dy, centerY - dx + 2.0 * dy);
     }
 
     private void pushMapTransform(GuiGraphicsExtractor graphics, int top, int size) {
         graphics.pose().pushMatrix();
         if (!threeDimensional) return;
+        float centerX = width / 2.0f;
         float centerY = top + size / 2.0f;
-        graphics.pose().translate(0, centerY);
-        graphics.pose().scale(1.0f, 0.70f);
-        graphics.pose().translate(0, -centerY);
+        graphics.pose().translate(centerX, centerY);
+        graphics.pose().scale(0.7071068f, 0.3535534f);
+        graphics.pose().rotate((float) (Math.PI / 4.0));
+        graphics.pose().translate(-centerX, -centerY);
     }
 
     private int mapX(int left, int size, int worldX) {
@@ -730,6 +744,7 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private record ScreenPoint(int x, int y) {}
+    private record MapPosition(double x, double y) {}
 
     @Override
     public boolean isPauseScreen() {
