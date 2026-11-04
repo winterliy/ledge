@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
-/** Client-local annotations, kept separate for each multiplayer server and dimension. */
+/** Client-local annotations, kept separate for each multiplayer server, world, and dimension. */
 final class LocalMapAnnotations {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final List<Marker> MARKERS = new ArrayList<>();
@@ -19,11 +19,13 @@ final class LocalMapAnnotations {
 
     private LocalMapAnnotations() {}
 
-    static void load(Path gameDirectory, String server, String dimension) {
+    static void load(Path gameDirectory, String server, String worldId, String dimension) {
         String serverKey = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(server.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String worldKey = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(worldId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         currentFile = gameDirectory.resolve("config/ledge/annotations")
-                .resolve(serverKey + "-" + dimension + ".json");
+                .resolve(serverKey + "-" + worldKey + "-" + dimension + ".json");
         MARKERS.clear();
         AREAS.clear();
         if (!Files.isRegularFile(currentFile)) return;

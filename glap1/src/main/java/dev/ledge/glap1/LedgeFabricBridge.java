@@ -8,10 +8,13 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Map;
@@ -64,18 +67,35 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
             unsubscribe(player.getUniqueId());
             return;
         }
-        if (message.length != 12 || message[0] != 1) return;
+        if (message[0] != 1) return;
         activeClients.add(player.getUniqueId());
-        int rendererIndex = Byte.toUnsignedInt(message[1]);
-        int resolutionIndex = Byte.toUnsignedInt(message[2]);
-        int zoom = Byte.toUnsignedInt(message[3]);
-        if (rendererIndex >= dev.ledge.common.MapRendererType.values().length
-                || resolutionIndex >= MapResolution.values().length || zoom > MapTileKey.MAX_ZOOM) return;
-        World world = player.getWorld();
+        String targetWorldId;
+        String targetDimension;
+        int zoom;
+        int tileX;
+        int tileZ;
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(message))) {
+            in.readUnsignedByte();
+            int rendererIndex = in.readUnsignedByte();
+            int resolutionIndex = in.readUnsignedByte();
+            zoom = in.readUnsignedByte();
+            tileX = in.readInt();
+            tileZ = in.readInt();
+            targetWorldId = in.readUTF();
+            targetDimension = in.readUTF();
+            if (in.available() != 0 || rendererIndex >= dev.ledge.common.MapRendererType.values().length
+                    || resolutionIndex >= MapResolution.values().length || zoom > MapTileKey.MAX_ZOOM
+                    || targetWorldId.length() > 96 || targetDimension.length() > 96) return;
+        } catch (IOException exception) {
+            return;
+        }
+        World world = Bukkit.getWorlds().stream()
+                .filter(candidate -> MapTileEngine.worldId(candidate).equals(targetWorldId)
+                        && MapTileEngine.dimensionId(candidate).equals(targetDimension))
+                .findFirst().orElse(null);
+        if (world == null) return;
         var config = MapTileEngine.configFor(world);
         // Server-owned per-world configuration is authoritative; client enum values are advisory.
-        int tileX = readInt(message, 4);
-        int tileZ = readInt(message, 8);
         MapTileKey key;
         try {
             key = new MapTileKey(MapTileEngine.worldId(world), MapTileEngine.dimensionId(world),
@@ -109,6 +129,11 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         subscribers.values().forEach(ids -> ids.remove(id));
         subscribers.entrySet().removeIf(entry -> entry.getValue().isEmpty());
         playerTiles.remove(id);
+    }
+
+    @EventHandler
+    public void onWorldChange(PlayerChangedWorldEvent event) {
+        if (activeClients.contains(event.getPlayer().getUniqueId())) sendSettings(event.getPlayer());
     }
 
     private void unsubscribe(UUID playerId) {
@@ -167,6 +192,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
                 out.writeByte(key.zoom());
                 out.writeInt(key.tileX());
                 out.writeInt(key.tileZ());
+                out.writeUTF(key.worldId());
                 out.writeUTF(key.dimensionId());
                 out.writeInt(transfer);
                 out.writeShort(part);
@@ -184,20 +210,28 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
     private void sendSettings(Player player) {
         var config = MapTileEngine.configFor(player.getWorld());
         try {
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream(48);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(256);
             DataOutputStream out = new DataOutputStream(bytes);
             out.writeByte(4);
             out.writeByte(config.renderer().ordinal());
             out.writeByte(config.resolution().ordinal());
+            out.writeUTF(config.worldId());
             out.writeUTF(config.dimensionId());
+            var worlds = Bukkit.getWorlds().stream().limit(32).toList();
+            out.writeByte(worlds.size());
+            for (World world : worlds) {
+                out.writeUTF(MapTileEngine.worldId(world));
+                out.writeUTF(MapTileEngine.dimensionId(world));
+                String label = world.getName() + " · " + world.getEnvironment().name();
+                out.writeUTF(label.length() > 64 ? label.substring(0, 64) : label);
+                var worldConfig = MapTileEngine.configFor(world);
+                out.writeByte(worldConfig.renderer().ordinal());
+                out.writeByte(worldConfig.resolution().ordinal());
+            }
             player.sendPluginMessage(plugin, CHANNEL, bytes.toByteArray());
         } catch (IOException exception) {
             plugin.getLogger().warning("Could not encode map settings: " + exception.getMessage());
         }
     }
 
-    private static int readInt(byte[] value, int offset) {
-        return (Byte.toUnsignedInt(value[offset]) << 24) | (Byte.toUnsignedInt(value[offset + 1]) << 16)
-                | (Byte.toUnsignedInt(value[offset + 2]) << 8) | Byte.toUnsignedInt(value[offset + 3]);
-    }
 }

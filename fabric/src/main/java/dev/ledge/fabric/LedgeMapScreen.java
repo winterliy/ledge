@@ -25,8 +25,14 @@ public final class LedgeMapScreen extends Screen {
     private boolean requested;
     private boolean coordinatesVisible = true;
     private String dimension = "";
+    private String targetWorldId = "";
+    private String targetLabel = "";
+    private int targetRenderer;
+    private int targetResolution = 1;
+    private String playerDimension = "";
     private int settingsVersion;
     private boolean followPlayer = true;
+    private boolean threeDimensional;
     private boolean dragging;
     private double lastMouseX;
     private double lastMouseY;
@@ -69,6 +75,9 @@ public final class LedgeMapScreen extends Screen {
 
     @Override
     protected void init() {
+        if (minecraft.level != null) {
+            playerDimension = minecraft.level.dimension().identifier().toString().replace(':', '_');
+        }
         LedgeFabricClient.requestSettings();
     }
 
@@ -77,29 +86,31 @@ public final class LedgeMapScreen extends Screen {
         if (minecraft.player == null) return;
         if (!requested && LedgeFabricClient.settingsVersion() > 0) {
             settingsVersion = LedgeFabricClient.settingsVersion();
+            setTarget(LedgeFabricClient.serverTarget());
             requestVisibleTiles();
             return;
         }
         int x = Math.floorDiv(minecraft.player.blockPosition().getX(), tileBlocks());
         int z = Math.floorDiv(minecraft.player.blockPosition().getZ(), tileBlocks());
         String currentDimension = minecraft.level.dimension().identifier().toString().replace(':', '_');
-        if (requested && !currentDimension.equals(dimension)) LedgeFabricClient.unsubscribeTiles();
+        if (!currentDimension.equals(playerDimension)) {
+            playerDimension = currentDimension;
+            LedgeFabricClient.requestSettings();
+        }
         if (settingsVersion != LedgeFabricClient.settingsVersion()) {
             settingsVersion = LedgeFabricClient.settingsVersion();
+            var serverTarget = LedgeFabricClient.serverTarget();
+            if (followPlayer && serverTarget != null) {
+                LedgeFabricClient.unsubscribeTiles();
+                setTarget(serverTarget);
+                loadAnnotations(dimension);
+            }
             if (followPlayer) {
-                centerX = x;
-                centerZ = z;
+                centerX = Math.floorDiv(minecraft.player.blockPosition().getX(), tileBlocks());
+                centerZ = Math.floorDiv(minecraft.player.blockPosition().getZ(), tileBlocks());
             }
             requestCurrentTiles();
-        } else if (followPlayer && (!requested || x != centerX || z != centerZ || !currentDimension.equals(dimension))) {
-            centerX = x;
-            centerZ = z;
-            if (!currentDimension.equals(dimension)) loadAnnotations(currentDimension);
-            dimension = currentDimension;
-            requestCurrentTiles();
-        } else if (!currentDimension.equals(dimension)) {
-            loadAnnotations(currentDimension);
-            dimension = currentDimension;
+        } else if (followPlayer && (!requested || x != centerX || z != centerZ)) {
             centerX = x;
             centerZ = z;
             requestCurrentTiles();
@@ -110,7 +121,8 @@ public final class LedgeMapScreen extends Screen {
         if (minecraft.player == null) return;
         centerX = Math.floorDiv(minecraft.player.blockPosition().getX(), tileBlocks());
         centerZ = Math.floorDiv(minecraft.player.blockPosition().getZ(), tileBlocks());
-        dimension = minecraft.level.dimension().identifier().toString().replace(':', '_');
+        if (targetWorldId.isEmpty()) setTarget(LedgeFabricClient.serverTarget());
+        if (dimension.isEmpty()) dimension = minecraft.level.dimension().identifier().toString().replace(':', '_');
         loadAnnotations(dimension);
         requestCurrentTiles();
     }
@@ -121,9 +133,44 @@ public final class LedgeMapScreen extends Screen {
 
     private void requestCurrentTiles() {
         for (int x = centerX - 1; x <= centerX + 1; x++) {
-            for (int z = centerZ - 1; z <= centerZ + 1; z++) LedgeFabricClient.requestTile(x, z, zoom);
+            for (int z = centerZ - 1; z <= centerZ + 1; z++) {
+                LedgeFabricClient.requestTile(targetWorldId, dimension, targetRenderer, targetResolution, x, z, zoom);
+            }
         }
         requested = true;
+    }
+
+    private void setTarget(LedgeFabricClient.MapTarget target) {
+        if (target == null) return;
+        targetWorldId = target.worldId();
+        dimension = target.dimension();
+        targetLabel = target.label();
+        targetRenderer = target.renderer();
+        targetResolution = target.resolution();
+        LedgeFabricClient.selectTarget(target);
+    }
+
+    private void cycleTarget() {
+        var targets = LedgeFabricClient.mapTargets();
+        if (targets.isEmpty()) return;
+        int current = -1;
+        for (int i = 0; i < targets.size(); i++) {
+            var target = targets.get(i);
+            if (target.worldId().equals(targetWorldId) && target.dimension().equals(dimension)) {
+                current = i;
+                break;
+            }
+        }
+        var next = targets.get((current + 1) % targets.size());
+        LedgeFabricClient.unsubscribeTiles();
+        setTarget(next);
+        followPlayer = false;
+        int blockX = minecraft.player == null ? 0 : minecraft.player.blockPosition().getX();
+        int blockZ = minecraft.player == null ? 0 : minecraft.player.blockPosition().getZ();
+        centerX = Math.floorDiv(blockX, tileBlocks());
+        centerZ = Math.floorDiv(blockZ, tileBlocks());
+        loadAnnotations(dimension);
+        requestCurrentTiles();
     }
 
     @Override
@@ -134,11 +181,13 @@ public final class LedgeMapScreen extends Screen {
         int tileSize = mapSize / 3;
         int left = (width - mapSize) / 2;
         int top = (height - mapSize) / 2;
+        pushMapTransform(graphics, top, mapSize);
         for (int tileX = centerX - 1; tileX <= centerX + 1; tileX++) {
             for (int tileZ = centerZ - 1; tileZ <= centerZ + 1; tileZ++) {
                 int x = left + (tileX - centerX + 1) * tileSize;
                 int z = top + (tileZ - centerZ + 1) * tileSize;
-                var texture = LedgeFabricClient.textureFor(dimension, tileX, tileZ, zoom);
+                var texture = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
+                        tileX, tileZ, zoom);
                 if (texture == null) {
                     graphics.fill(x, z, x + tileSize, z + tileSize, 0xff252c32);
                     graphics.centeredText(font, "불러오는 중", x + tileSize / 2, z + tileSize / 2, 0xffb8c2ca);
@@ -148,7 +197,9 @@ public final class LedgeMapScreen extends Screen {
             }
         }
         graphics.outline(left, top, left + tileSize * 3, top + tileSize * 3, 0xff59636c);
-        if (minecraft.player != null && LedgeFabricClient.showPlayerMarker()) {
+        var playerTarget = LedgeFabricClient.serverTarget();
+        if (minecraft.player != null && LedgeFabricClient.showPlayerMarker() && playerTarget != null
+                && playerTarget.worldId().equals(targetWorldId) && playerTarget.dimension().equals(dimension)) {
             int blocks = tileBlocks();
             double markerX = left + mapSize / 2.0 + (minecraft.player.getX() - (centerX * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
             double markerZ = top + mapSize / 2.0 + (minecraft.player.getZ() - (centerZ * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
@@ -175,6 +226,7 @@ public final class LedgeMapScreen extends Screen {
             graphics.fill(x - 4, z - 4, x + 5, z + 5, 0xff000000 | rgb);
             graphics.text(font, marker.name(), x + 6, z - 5, 0xffffffff);
         }
+        graphics.pose().popMatrix();
         graphics.fill(10, 10, 190, coordinatesVisible ? 92 : 42, 0xd9000000);
         graphics.text(font, "좌표", 20, 18, 0xffffffff);
         graphics.text(font, "×", 172, 18, 0xffffffff);
@@ -184,15 +236,21 @@ public final class LedgeMapScreen extends Screen {
         graphics.centeredText(font, "−", width - 272, 18, 0xffffffff);
         graphics.fill(width - 252, 10, width - 224, 36, 0xd9000000);
         graphics.centeredText(font, "+", width - 238, 18, 0xffffffff);
+        graphics.fill(width - 334, 10, width - 290, 36, 0xd9000000);
+        graphics.centeredText(font, threeDimensional ? "3D" : "2D", width - 312, 18, 0xffffffff);
+        graphics.fill(width - 472, 10, width - 340, 36, 0xd9000000);
+        String shownTarget = targetLabel.length() > 18 ? targetLabel.substring(0, 17) + "…" : targetLabel;
+        graphics.text(font, shownTarget.isEmpty() ? "차원 선택" : shownTarget, width - 466, 18, 0xffffffff);
         graphics.fill(width - 104, 10, width - 10, 36, 0xd9000000);
         graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", width - 98, 18, 0xffffffff);
         if (coordinatesVisible && minecraft.player != null) {
             int worldX;
             int worldZ;
             var pos = minecraft.player.blockPosition();
-            if (mouseX >= left && mouseX < left + tileSize * 3 && mouseY >= top && mouseY < top + tileSize * 3) {
+            double mapMouseY = unprojectMapY(mouseY, top, mapSize);
+            if (mouseX >= left && mouseX < left + tileSize * 3 && mapMouseY >= top && mapMouseY < top + tileSize * 3) {
                 worldX = (centerX - 1) * tileBlocks() + (int) ((mouseX - left) * tileBlocks() * 3.0 / (tileSize * 3));
-                worldZ = (centerZ - 1) * tileBlocks() + (int) ((mouseY - top) * tileBlocks() * 3.0 / (tileSize * 3));
+                worldZ = (centerZ - 1) * tileBlocks() + (int) ((mapMouseY - top) * tileBlocks() * 3.0 / (tileSize * 3));
             } else {
                 worldX = pos.getX();
                 worldZ = pos.getZ();
@@ -213,6 +271,7 @@ public final class LedgeMapScreen extends Screen {
             graphics.outline(sx, sy, ex, ey, 0xff66b1ff);
         }
         if (selectingArea) {
+            pushMapTransform(graphics, top, mapSize);
             List<LocalMapAnnotations.Point> preview = new ArrayList<>(areaPoints);
             LocalMapAnnotations.Point end = straightEndpoint;
             if (end != null && !preview.isEmpty()) preview.add(end);
@@ -226,9 +285,12 @@ public final class LedgeMapScreen extends Screen {
                 }
                 if (straightEndpoint == null) {
                     var last = preview.get(preview.size() - 1);
-                    drawLine(graphics, mapX(left, mapSize, last.x()), mapZ(top, mapSize, last.z()), mouseX, mouseY, 0xff66b1ff);
+                    drawLine(graphics, mapX(left, mapSize, last.x()), mapZ(top, mapSize, last.z()),
+                            mapX(left, mapSize, mapWorldX(left, mapSize, mouseX)),
+                            mapZ(top, mapSize, mapWorldZ(top, mapSize, mouseY)), 0xff66b1ff);
                 }
             }
+            graphics.pose().popMatrix();
         }
         if (contextMenuVisible) {
             graphics.fill(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + 66, 0xf020252b);
@@ -277,6 +339,14 @@ public final class LedgeMapScreen extends Screen {
         }
         if (y >= 10 && y <= 36 && x >= width - 252 && x <= width - 224) {
             changeZoom(1);
+            return true;
+        }
+        if (y >= 10 && y <= 36 && x >= width - 334 && x <= width - 290) {
+            threeDimensional = !threeDimensional;
+            return true;
+        }
+        if (y >= 10 && y <= 36 && x >= width - 472 && x <= width - 340) {
+            cycleTarget();
             return true;
         }
         if (x >= width - 104 && x <= width - 10 && y >= 10 && y <= 36) {
@@ -375,7 +445,8 @@ public final class LedgeMapScreen extends Screen {
         }
         if (!dragging) return super.mouseDragged(event, deltaX, deltaY);
         dragX += event.x() - lastMouseX;
-        dragY += event.y() - lastMouseY;
+        double verticalScale = threeDimensional ? 0.70 : 1.0;
+        dragY += (event.y() - lastMouseY) / verticalScale;
         lastMouseX = event.x();
         lastMouseY = event.y();
         int mapSize = Math.min(height - 36, width - 300);
@@ -547,7 +618,7 @@ public final class LedgeMapScreen extends Screen {
     private void loadAnnotations(String targetDimension) {
         var server = minecraft.getCurrentServer();
         String serverId = server == null ? "singleplayer" : server.ip;
-        LocalMapAnnotations.load(minecraft.gameDirectory.toPath(), serverId, targetDimension);
+        LocalMapAnnotations.load(minecraft.gameDirectory.toPath(), serverId, targetWorldId, targetDimension);
     }
 
     private int mapSize() {
@@ -558,7 +629,8 @@ public final class LedgeMapScreen extends Screen {
         int size = mapSize();
         int left = (width - size) / 2;
         int top = (height - size) / 2;
-        return x >= left && x < left + size && y >= top && y < top + size;
+        double mapY = unprojectMapY(y, top, size);
+        return x >= left && x < left + size && mapY >= top && mapY < top + size;
     }
 
     private int mapWorldX(int left, int size, int x) {
@@ -566,7 +638,23 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private int mapWorldZ(int top, int size, int y) {
-        return (centerZ - 1) * tileBlocks() + (int) ((y - top) * tileBlocks() * 3.0 / size);
+        double mapY = unprojectMapY(y, top, size);
+        return (centerZ - 1) * tileBlocks() + (int) ((mapY - top) * tileBlocks() * 3.0 / size);
+    }
+
+    private double unprojectMapY(double screenY, int top, int size) {
+        if (!threeDimensional) return screenY;
+        double centerY = top + size / 2.0;
+        return centerY + (screenY - centerY) / 0.70;
+    }
+
+    private void pushMapTransform(GuiGraphicsExtractor graphics, int top, int size) {
+        graphics.pose().pushMatrix();
+        if (!threeDimensional) return;
+        float centerY = top + size / 2.0f;
+        graphics.pose().translate(0, centerY);
+        graphics.pose().scale(1.0f, 0.70f);
+        graphics.pose().translate(0, -centerY);
     }
 
     private int mapX(int left, int size, int worldX) {

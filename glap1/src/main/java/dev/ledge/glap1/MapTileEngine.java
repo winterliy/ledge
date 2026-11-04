@@ -313,6 +313,14 @@ final class MapTileEngine extends BukkitRunnable {
                 int z = key.minBlockZ() + sampleZ * spacing;
                 if (!world.isChunkLoaded(x >> 4, z >> 4)) {
                     samples[index] = new MapBlockSample(0x00000000, world.getMinHeight(), false);
+                } else if (key.renderer() == MapRendererType.CAVE) {
+                    Block surface = world.getHighestBlockAt(x, z);
+                    int caveY = caveSliceY(world);
+                    Block floor = world.getBlockAt(x, caveY, z);
+                    Block above = world.getBlockAt(x, caveY + 1, z);
+                    boolean underground = surface.getY() > caveY + 2;
+                    boolean exposed = underground && floor.getType().isSolid() && !above.getType().isSolid();
+                    samples[index] = new MapBlockSample(colorFor(floor.getType()), caveY, exposed);
                 } else {
                     Block top = world.getHighestBlockAt(x, z);
                     samples[index] = new MapBlockSample(colorFor(top.getType()), top.getY(), false);
@@ -326,5 +334,11 @@ final class MapTileEngine extends BukkitRunnable {
         private boolean complete() {
             return index >= samples.length;
         }
+    }
+
+    private static int caveSliceY(World world) {
+        int min = world.getMinHeight();
+        int max = world.getMaxHeight() - 1;
+        return Math.max(min + 1, Math.min(max - 1, min + (max - min) / 4));
     }
 }
