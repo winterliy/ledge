@@ -57,7 +57,7 @@ public final class FileMapTileStore implements MapTileStore {
         if (!Files.isRegularFile(file) || Files.size(file) != MapHeightTile.BYTE_SIZE) return Optional.empty();
         try {
             return Optional.of(MapHeightTile.fromBytes(Files.readAllBytes(file)));
-        } catch (IllegalArgumentException exception) {
+        } catch (IllegalArgumentException | IOException exception) {
             return Optional.empty();
         }
     }
@@ -78,9 +78,38 @@ public final class FileMapTileStore implements MapTileStore {
         }
     }
 
+    public Optional<MapProjectedTile> readProjected(MapTileKey key) throws IOException {
+        Path file = projectedPath(key);
+        if (!Files.isRegularFile(file) || Files.size(file) > MapProjectedTile.MAX_BYTES) return Optional.empty();
+        try {
+            return Optional.of(MapProjectedTile.fromBytes(Files.readAllBytes(file)));
+        } catch (IllegalArgumentException | IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    public void writeProjected(MapTileKey key, MapProjectedTile projected) throws IOException {
+        byte[] bytes = projected.toBytes();
+        Path file = projectedPath(key);
+        Files.createDirectories(file.getParent());
+        Path temporary = file.resolveSibling(file.getFileName() + "." + UUID.randomUUID() + ".tmp");
+        try {
+            Files.write(temporary, bytes);
+            try {
+                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
     @Override
     public void delete(MapTileKey key) throws IOException {
         Files.deleteIfExists(tilePath(key));
+        Files.deleteIfExists(heightPath(key));
+        Files.deleteIfExists(projectedPath(key));
     }
 
     public Path tilePath(MapTileKey key) {
@@ -102,6 +131,13 @@ public final class FileMapTileStore implements MapTileStore {
         Path tile = tilePath(key);
         Path path = tile.resolveSibling(tile.getFileName() + ".height").normalize();
         if (!path.startsWith(root)) throw new IllegalArgumentException("height tile path escaped storage root");
+        return path;
+    }
+
+    private Path projectedPath(MapTileKey key) {
+        Path tile = tilePath(key);
+        Path path = tile.resolveSibling(tile.getFileName() + ".projected").normalize();
+        if (!path.startsWith(root)) throw new IllegalArgumentException("projected tile path escaped storage root");
         return path;
     }
 }

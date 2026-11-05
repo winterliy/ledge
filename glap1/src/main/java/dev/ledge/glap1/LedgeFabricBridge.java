@@ -1,6 +1,7 @@
 package dev.ledge.glap1;
 
 import dev.ledge.common.MapResolution;
+import dev.ledge.common.MapProjectedTile;
 import dev.ledge.common.MapTileKey;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -17,6 +18,7 @@ import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import javax.imageio.ImageIO;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -117,7 +119,18 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
             requests.computeIfPresent(player.getUniqueId(), (id, current) -> current <= 1 ? null : current - 1);
             if (player.isOnline() && activeClients.contains(player.getUniqueId())) {
                 sendTile(player, key, png);
-                subscribe(player.getUniqueId(), key);
+                if (key.renderer() == dev.ledge.common.MapRendererType.SURFACE) {
+                    tiles.readProjectedOrRequest(key, projected -> {
+                        sendProjected(player, key, projected);
+                        Bukkit.getScheduler().runTask(plugin, () -> {
+                            if (player.isOnline() && activeClients.contains(player.getUniqueId())) {
+                                subscribe(player.getUniqueId(), key);
+                            }
+                        });
+                    });
+                } else {
+                    subscribe(player.getUniqueId(), key);
+                }
             }
         });
     }
@@ -180,7 +193,10 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         if (ids == null) return;
         for (UUID id : ids) {
             Player player = Bukkit.getPlayer(id);
-            if (player != null && player.isOnline() && activeClients.contains(id)) sendTile(player, key, png);
+            if (player != null && player.isOnline() && activeClients.contains(id)) {
+                sendTile(player, key, png);
+                tiles.readProjectedOrRequest(key, projected -> sendProjected(player, key, projected));
+            }
         }
     }
 
@@ -212,6 +228,41 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
                 plugin.getLogger().warning("Could not encode map tile packet: " + exception.getMessage());
                 return;
             }
+        }
+    }
+
+    private void sendProjected(Player player, MapTileKey key, MapProjectedTile projected) {
+        if (!player.isOnline() || !activeClients.contains(player.getUniqueId())) return;
+        try {
+            ByteArrayOutputStream pngBytes = new ByteArrayOutputStream(24_000);
+            if (!ImageIO.write(projected.image(), "png", pngBytes)) return;
+            byte[] png = pngBytes.toByteArray();
+            if (png.length == 0 || png.length > MAX_TILE_BYTES) return;
+            int parts = (png.length + FRAGMENT_BYTES - 1) / FRAGMENT_BYTES;
+            int transfer = UUID.randomUUID().hashCode();
+            for (int part = 0; part < parts; part++) {
+                int start = part * FRAGMENT_BYTES;
+                int length = Math.min(FRAGMENT_BYTES, png.length - start);
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream(length + 72);
+                DataOutputStream out = new DataOutputStream(bytes);
+                out.writeByte(7);
+                out.writeByte(key.renderer().ordinal());
+                out.writeByte(key.resolution().ordinal());
+                out.writeByte(key.zoom());
+                out.writeInt(key.tileX());
+                out.writeInt(key.tileZ());
+                out.writeUTF(key.worldId());
+                out.writeUTF(key.dimensionId());
+                out.writeInt(projected.topOffset());
+                out.writeInt(transfer);
+                out.writeShort(part);
+                out.writeShort(parts);
+                out.writeInt(png.length);
+                out.write(png, start, length);
+                player.sendPluginMessage(plugin, CHANNEL, bytes.toByteArray());
+            }
+        } catch (IOException exception) {
+            plugin.getLogger().warning("Could not encode projected map tile: " + exception.getMessage());
         }
     }
 

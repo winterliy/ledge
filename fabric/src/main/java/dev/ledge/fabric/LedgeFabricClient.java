@@ -32,6 +32,7 @@ public final class LedgeFabricClient implements ClientModInitializer {
             new KeyMapping("key.ledge.open_map", InputConstants.Type.KEYBOARD, InputConstants.KEY_Z, CATEGORY));
     private static final LinkedHashMap<Integer, Transfer> TRANSFERS = new LinkedHashMap<>();
     private static final LinkedHashMap<String, Identifier> TEXTURES = new LinkedHashMap<>(16, 0.75f, true);
+    private static final LinkedHashMap<String, ProjectedTexture> PROJECTED_TEXTURES = new LinkedHashMap<>(16, 0.75f, true);
     private static final Set<String> REQUESTED_TILES = ConcurrentHashMap.newKeySet();
     private static boolean showPlayerMarker = true;
     private static volatile int serverRenderer;
@@ -86,6 +87,10 @@ public final class LedgeFabricClient implements ClientModInitializer {
 
     static Identifier textureFor(String worldId, String dimension, int renderer, int resolution, int tileX, int tileZ, int zoom) {
         return TEXTURES.get(worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution);
+    }
+
+    static ProjectedTexture projectedTextureFor(String worldId, String dimension, int renderer, int resolution, int tileX, int tileZ, int zoom) {
+        return PROJECTED_TEXTURES.get(worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution);
     }
 
     static List<MapTarget> mapTargets() { return mapTargets; }
@@ -143,7 +148,8 @@ public final class LedgeFabricClient implements ClientModInitializer {
                 }
                 return;
             }
-            if (operation != 2) return;
+            if (operation != 2 && operation != 7) return;
+            boolean projected = operation == 7;
             int renderer = in.readUnsignedByte();
             int resolution = in.readUnsignedByte();
             int zoom = in.readUnsignedByte();
@@ -151,17 +157,19 @@ public final class LedgeFabricClient implements ClientModInitializer {
             int tileZ = in.readInt();
             String worldId = in.readUTF();
             String dimension = in.readUTF();
+            int topOffset = projected ? in.readInt() : 0;
             int transferId = in.readInt();
             int part = in.readUnsignedShort();
             int partCount = in.readUnsignedShort();
             int totalBytes = in.readInt();
             int fragmentSize = in.available();
             if (renderer >= 3 || resolution >= 4 || zoom > 12 || worldId.length() > 96 || dimension.length() > 96
+                    || projected && (topOffset < 0 || topOffset >= 4096)
                     || partCount < 1 || partCount > 48 || part >= partCount
                     || totalBytes < 1 || totalBytes > MAX_TILE_BYTES || fragmentSize > FRAGMENT_BYTES) return;
             Transfer transfer = TRANSFERS.computeIfAbsent(transferId,
-                    ignored -> new Transfer(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, partCount, totalBytes));
-            if (!transfer.matches(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, partCount, totalBytes) || transfer.parts[part] != null) return;
+                    ignored -> new Transfer(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, projected, topOffset, partCount, totalBytes));
+            if (!transfer.matches(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, projected, topOffset, partCount, totalBytes) || transfer.parts[part] != null) return;
             byte[] fragment = in.readNBytes(fragmentSize);
             transfer.parts[part] = fragment;
             transfer.received += fragment.length;
@@ -171,7 +179,8 @@ public final class LedgeFabricClient implements ClientModInitializer {
                 if (transfer.received != totalBytes) return;
                 ByteArrayOutputStream png = new ByteArrayOutputStream(totalBytes);
                 for (byte[] value : transfer.parts) png.write(value);
-                installTile(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, png.toByteArray());
+                if (projected) installProjectedTile(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, topOffset, png.toByteArray());
+                else installTile(worldId, dimension, tileX, tileZ, renderer, resolution, zoom, png.toByteArray());
             }
             while (TRANSFERS.size() > MAX_TRANSFERS) TRANSFERS.remove(TRANSFERS.keySet().iterator().next());
         } catch (IOException | RuntimeException ignored) {
@@ -198,6 +207,29 @@ public final class LedgeFabricClient implements ClientModInitializer {
         }
     }
 
+    private static void installProjectedTile(String worldId, String dimension, int tileX, int tileZ, int renderer, int resolution,
+                                             int zoom, int topOffset, byte[] png) {
+        String key = worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution;
+        Identifier id = Identifier.fromNamespaceAndPath("ledge", "projected/" + worldId + "/" + dimension + "/r" + resolution
+                + "/m" + renderer + "/z" + zoom + "/" + tileX + "_" + tileZ);
+        try {
+            NativeImage image = NativeImage.read(png);
+            if (image.getWidth() != 256 || image.getHeight() < 1 || image.getHeight() > 4096
+                    || topOffset < 0 || topOffset >= image.getHeight()) {
+                image.close();
+                return;
+            }
+            int imageHeight = image.getHeight();
+            Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(() -> "Ledge projected tile", image));
+            PROJECTED_TEXTURES.put(key, new ProjectedTexture(id, topOffset, imageHeight));
+            while (PROJECTED_TEXTURES.size() > CACHE_LIMIT) {
+                ProjectedTexture evicted = PROJECTED_TEXTURES.remove(PROJECTED_TEXTURES.keySet().iterator().next());
+                Minecraft.getInstance().getTextureManager().release(evicted.texture());
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
     private static final class Transfer {
         private final String worldId;
         private final int tileX;
@@ -205,13 +237,16 @@ public final class LedgeFabricClient implements ClientModInitializer {
         private final int renderer;
         private final int resolution;
         private final int zoom;
+        private final boolean projected;
+        private final int topOffset;
         private final String dimension;
         private final int totalBytes;
         private final byte[][] parts;
         private int received;
         private int receivedParts;
 
-        private Transfer(String worldId, String dimension, int tileX, int tileZ, int renderer, int resolution, int zoom, int partCount, int totalBytes) {
+        private Transfer(String worldId, String dimension, int tileX, int tileZ, int renderer, int resolution, int zoom,
+                         boolean projected, int topOffset, int partCount, int totalBytes) {
             this.worldId = worldId;
             this.dimension = dimension;
             this.tileX = tileX;
@@ -219,16 +254,21 @@ public final class LedgeFabricClient implements ClientModInitializer {
             this.renderer = renderer;
             this.resolution = resolution;
             this.zoom = zoom;
+            this.projected = projected;
+            this.topOffset = topOffset;
             this.totalBytes = totalBytes;
             this.parts = new byte[partCount][];
         }
 
-        private boolean matches(String worldId, String dimension, int x, int z, int renderer, int resolution, int zoom, int count, int length) {
+        private boolean matches(String worldId, String dimension, int x, int z, int renderer, int resolution, int zoom,
+                                boolean projected, int topOffset, int count, int length) {
             return this.worldId.equals(worldId) && this.dimension.equals(dimension) && tileX == x && tileZ == z && this.renderer == renderer
                     && this.resolution == resolution && this.zoom == zoom
+                    && this.projected == projected && this.topOffset == topOffset
                     && parts.length == count && totalBytes == length;
         }
     }
 
+    record ProjectedTexture(Identifier texture, int topOffset, int height) {}
     record MapTarget(String worldId, String dimension, String label, int renderer, int resolution) {}
 }

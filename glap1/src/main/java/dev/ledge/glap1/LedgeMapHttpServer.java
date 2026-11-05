@@ -90,8 +90,8 @@ final class LedgeMapHttpServer {
                 respond(exchange, 200, "application/json; charset=utf-8", playersSnapshot);
             } else if ("/tiles".equals(path)) {
                 serveTile(exchange, query(exchange.getRequestURI().getRawQuery()));
-            } else if ("/heights".equals(path)) {
-                serveHeights(exchange, query(exchange.getRequestURI().getRawQuery()));
+            } else if ("/projected".equals(path)) {
+                serveProjected(exchange, query(exchange.getRequestURI().getRawQuery()));
             } else {
                 respond(exchange, 404, "text/plain; charset=utf-8", "Not found");
             }
@@ -132,7 +132,7 @@ final class LedgeMapHttpServer {
         respond(exchange, 200, "image/png", bytes.toByteArray());
     }
 
-    private void serveHeights(HttpExchange exchange, Map<String, String> query) throws IOException {
+    private void serveProjected(HttpExchange exchange, Map<String, String> query) throws IOException {
         String worldId = required(query, "world");
         String dimension = required(query, "dimension");
         if (!knownWorlds.containsKey(worldId + "\u0000" + dimension)) {
@@ -141,7 +141,7 @@ final class LedgeMapHttpServer {
         }
         MapRendererType renderer = enumValue(MapRendererType.class, query.getOrDefault("renderer", "SURFACE"));
         if (renderer != MapRendererType.SURFACE) {
-            respond(exchange, 400, "text/plain; charset=utf-8", "Height data is available for surface maps only");
+            respond(exchange, 400, "text/plain; charset=utf-8", "Projected terrain is available for surface maps only");
             return;
         }
         MapResolution resolution = enumValue(MapResolution.class, query.getOrDefault("resolution", "STANDARD"));
@@ -149,14 +149,15 @@ final class LedgeMapHttpServer {
         int x = number(query, "x", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
         int z = number(query, "z", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
         MapTileKey key = new MapTileKey(worldId, dimension, renderer, resolution, zoom, x, z);
-        var heights = tileEngine.readHeights(key);
-        if (heights.isEmpty()) {
+        var projected = tileEngine.readProjected(key);
+        if (projected.isEmpty()) {
             exchange.getResponseHeaders().set("Retry-After", "1");
             respond(exchange, 202, "text/plain; charset=utf-8", "Rendering");
             return;
         }
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
-        respond(exchange, 200, "application/octet-stream", heights.get().toBytes());
+        exchange.getResponseHeaders().set("X-Ledge-Top-Offset", Integer.toString(projected.get().topOffset()));
+        respond(exchange, 200, "image/png", projected.get().toPng());
     }
 
     private void refreshSnapshots() {
@@ -193,6 +194,7 @@ final class LedgeMapHttpServer {
                     .append("\",\"world\":\"").append(escape(MapTileEngine.worldId(player.getWorld())))
                     .append("\",\"dimension\":\"").append(escape(MapTileEngine.dimensionId(player.getWorld())))
                     .append("\",\"x\":").append(player.getLocation().getX())
+                    .append(",\"y\":").append(player.getLocation().getY())
                     .append(",\"z\":").append(player.getLocation().getZ()).append('}');
         }
         return json.append(']').toString().getBytes(StandardCharsets.UTF_8);

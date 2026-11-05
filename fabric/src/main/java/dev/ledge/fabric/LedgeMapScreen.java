@@ -181,11 +181,31 @@ public final class LedgeMapScreen extends Screen {
         int tileSize = mapSize / 3;
         int left = (width - mapSize) / 2;
         int top = (height - mapSize) / 2;
+        boolean projectedSurface = threeDimensional && targetRenderer == 0;
         pushMapTransform(graphics, top, mapSize);
+        if (projectedSurface) graphics.pose().popMatrix();
         for (int tileX = centerX - 1; tileX <= centerX + 1; tileX++) {
             for (int tileZ = centerZ - 1; tileZ <= centerZ + 1; tileZ++) {
                 int x = left + (tileX - centerX + 1) * tileSize;
                 int z = top + (tileZ - centerZ + 1) * tileSize;
+                if (projectedSurface) {
+                    var projected = LedgeFabricClient.projectedTextureFor(targetWorldId, dimension, targetRenderer,
+                            targetResolution, tileX, tileZ, zoom);
+                    if (projected == null) {
+                        graphics.fill(x, z, x + tileSize, z + tileSize / 2, 0xff252c32);
+                        continue;
+                    }
+                    double centerX = left + mapSize / 2.0;
+                    double centerY = top + mapSize / 2.0;
+                    double dx = x - centerX;
+                    double dz = z - centerY;
+                    int projectedX = (int) Math.round(centerX + (dx - dz) / 2.0 - tileSize / 2.0);
+                    float textureScale = tileSize / 256.0f;
+                    int projectedY = (int) Math.round(centerY + (dx + dz) / 4.0 - projected.topOffset() * textureScale);
+                    int projectedHeight = Math.max(1, Math.round(projected.height() * textureScale));
+                    graphics.blit(projected.texture(), projectedX, projectedY, tileSize, projectedHeight, 0f, 0f, 1f, 1f);
+                    continue;
+                }
                 var texture = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
                         tileX, tileZ, zoom);
                 if (texture == null) {
@@ -196,6 +216,7 @@ public final class LedgeMapScreen extends Screen {
                 }
             }
         }
+        if (projectedSurface) pushMapTransform(graphics, top, mapSize);
         graphics.outline(left, top, left + tileSize * 3, top + tileSize * 3, 0xff59636c);
         var playerTarget = LedgeFabricClient.serverTarget();
         if (minecraft.player != null && LedgeFabricClient.showPlayerMarker() && playerTarget != null
@@ -203,6 +224,11 @@ public final class LedgeMapScreen extends Screen {
             int blocks = tileBlocks();
             double markerX = left + mapSize / 2.0 + (minecraft.player.getX() - (centerX * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
             double markerZ = top + mapSize / 2.0 + (minecraft.player.getZ() - (centerZ * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
+            if (projectedSurface) {
+                double elevation = (minecraft.player.getY() - 64.0) * mapSize / (blocks * 3.0) / 4.0;
+                markerX -= elevation * 2.0;
+                markerZ -= elevation * 2.0;
+            }
             graphics.fill((int) markerX - 3, (int) markerZ - 3, (int) markerX + 4, (int) markerZ + 4, 0xffff5a5a);
         }
         for (var area : LocalMapAnnotations.areas()) {
