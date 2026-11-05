@@ -8,7 +8,7 @@ Ledge is a shared Minecraft map project with two platform adapters:
 
 ## Current progress
 
-This is an **early development preview (`0.1.0-alpha.2`)**, not a complete map product.
+This is an **early development preview (`0.1.0-alpha.3`)**, not a complete map product.
 
 ### Implemented
 
@@ -45,7 +45,9 @@ This is an **early development preview (`0.1.0-alpha.2`)**, not a complete map p
 - Started Paper 26.3 build 218 with the GLAP1 plugin and joined it using a Fabric 26.3 client. Confirmed the client received and decoded both regular and projected terrain PNG tiles while the Ledge map screen was open.
 - The session exposed invalid Minecraft texture identifiers for uppercase world IDs. Texture paths now encode world/dimension identifiers as lowercase hexadecimal and tile coordinates as safe path segments.
 - Confirmed Paper's web endpoints return the world list and color/projected PNG tiles. The generated projected terrain image was inspected separately.
-- The game session used an offline test player on an isolated local test server. The map screen opened and its textures decoded; manual visual inspection of the live game window and input testing for map controls remain to be done.
+- The game session used an offline test player on an isolated local Paper 26.3 build 218 server. The client opened the map and decoded regular/projected tiles. Automated in-game interaction checks passed for coordinate panel visibility, player marker toggle, 2D/3D switching, zoom buttons and wheel, drag panning, right-click annotation menu, point and area persistence, and selected-region screenshot creation.
+- Fixed the screenshot crop to copy the selected rectangle from the captured frame into the new image. The screenshot output was checked after the in-game selection test.
+- Kept the target selector usable at narrow screen widths by clamping its hitbox and truncating its label to the available space.
 
 ### Known limitations
 
@@ -58,7 +60,7 @@ This is an **early development preview (`0.1.0-alpha.2`)**, not a complete map p
 - Client annotations are local and are not yet sent to the server or shown in the web map.
 - The renderer currently samples the top block of already-loaded columns. Chunky pre-generation is optional and is not automatically started by opening the map.
 - Dynmap code has not been copied; its behavior and tile concepts are being reimplemented for the current target. The Xaero implementation has not been copied or integrated.
-- Manual review of map controls, player-marker placement, panning, zoom, and annotation alignment remains outstanding.
+- A human visual review on a normal interactive game session remains outstanding; the recorded control checks were automated in a local client/server session.
 
 ## Next implementation steps
 

@@ -264,9 +264,15 @@ public final class LedgeMapScreen extends Screen {
         graphics.centeredText(font, "+", width - 238, 18, 0xffffffff);
         graphics.fill(width - 334, 10, width - 290, 36, 0xd9000000);
         graphics.centeredText(font, threeDimensional ? "3D" : "2D", width - 312, 18, 0xffffffff);
-        graphics.fill(width - 472, 10, width - 340, 36, 0xd9000000);
-        String shownTarget = targetLabel.length() > 18 ? targetLabel.substring(0, 17) + "…" : targetLabel;
-        graphics.text(font, shownTarget.isEmpty() ? "차원 선택" : shownTarget, width - 466, 18, 0xffffffff);
+        int targetButtonLeft = Math.max(10, width - 472);
+        int targetButtonRight = width - 340;
+        graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0xd9000000);
+        String shownTarget = targetLabel.isEmpty() ? "차원 선택" : targetLabel;
+        int targetCharacters = Math.max(1, (targetButtonRight - targetButtonLeft - 12) / 6);
+        if (shownTarget.length() > targetCharacters) {
+            shownTarget = shownTarget.substring(0, Math.max(0, targetCharacters - 1)) + "…";
+        }
+        graphics.text(font, shownTarget, targetButtonLeft + 6, 18, 0xffffffff);
         graphics.fill(width - 104, 10, width - 10, 36, 0xd9000000);
         graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", width - 98, 18, 0xffffffff);
         if (coordinatesVisible && minecraft.player != null) {
@@ -372,7 +378,7 @@ public final class LedgeMapScreen extends Screen {
             threeDimensional = !threeDimensional;
             return true;
         }
-        if (y >= 10 && y <= 36 && x >= width - 472 && x <= width - 340) {
+        if (y >= 10 && y <= 36 && x >= Math.max(10, width - 472) && x <= width - 340) {
             cycleTarget();
             return true;
         }
@@ -553,7 +559,7 @@ public final class LedgeMapScreen extends Screen {
                 return;
             }
             NativeImage crop = new NativeImage(right - left, bottom - top, false);
-            crop.copyRect(image, left, top, right - left, bottom - top, 0, 0, false, false);
+            image.copyRect(crop, left, top, 0, 0, right - left, bottom - top, false, false);
             image.close();
             Path directory = minecraft.gameDirectory.toPath().resolve("screenshots");
             String name = "ledge-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".png";
