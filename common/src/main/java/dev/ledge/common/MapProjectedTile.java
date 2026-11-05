@@ -58,7 +58,7 @@ public record MapProjectedTile(BufferedImage image, int topOffset) {
                 throw new IOException("invalid projected tile bounds");
             }
             BufferedImage image = ImageIO.read(input);
-            if (image == null || image.getWidth() != width || image.getHeight() != height || input.available() != 0) {
+            if (image == null || image.getWidth() != width || image.getHeight() != height) {
                 throw new IOException("invalid projected tile image");
             }
             return new MapProjectedTile(image, topOffset);
