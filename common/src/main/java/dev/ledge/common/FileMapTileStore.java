@@ -52,6 +52,32 @@ public final class FileMapTileStore implements MapTileStore {
         }
     }
 
+    public Optional<MapHeightTile> readHeights(MapTileKey key) throws IOException {
+        Path file = heightPath(key);
+        if (!Files.isRegularFile(file) || Files.size(file) != MapHeightTile.BYTE_SIZE) return Optional.empty();
+        try {
+            return Optional.of(MapHeightTile.fromBytes(Files.readAllBytes(file)));
+        } catch (IllegalArgumentException exception) {
+            return Optional.empty();
+        }
+    }
+
+    public void writeHeights(MapTileKey key, MapHeightTile heights) throws IOException {
+        Path file = heightPath(key);
+        Files.createDirectories(file.getParent());
+        Path temporary = file.resolveSibling(file.getFileName() + "." + UUID.randomUUID() + ".tmp");
+        try {
+            Files.write(temporary, heights.toBytes());
+            try {
+                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
     @Override
     public void delete(MapTileKey key) throws IOException {
         Files.deleteIfExists(tilePath(key));
@@ -69,6 +95,13 @@ public final class FileMapTileStore implements MapTileStore {
         if (!path.startsWith(root)) {
             throw new IllegalArgumentException("tile path escaped storage root");
         }
+        return path;
+    }
+
+    private Path heightPath(MapTileKey key) {
+        Path tile = tilePath(key);
+        Path path = tile.resolveSibling(tile.getFileName() + ".height").normalize();
+        if (!path.startsWith(root)) throw new IllegalArgumentException("height tile path escaped storage root");
         return path;
     }
 }
