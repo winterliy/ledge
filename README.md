@@ -8,7 +8,7 @@ Ledge is a shared Minecraft map project with two platform adapters:
 
 ## Current progress
 
-This is an **early development preview (`0.1.0-alpha.3`)**, not a complete map product.
+This is an **early development preview (`0.1.0-alpha.4`)**, not a complete map product.
 
 ### Implemented
 
@@ -48,6 +48,7 @@ This is an **early development preview (`0.1.0-alpha.3`)**, not a complete map p
 - The game session used an offline test player on an isolated local Paper 26.3 build 218 server. The client opened the map and decoded regular/projected tiles. Automated in-game interaction checks passed for coordinate panel visibility, player marker toggle, 2D/3D switching, zoom buttons and wheel, drag panning, right-click annotation menu, point and area persistence, and selected-region screenshot creation.
 - Fixed the screenshot crop to copy the selected rectangle from the captured frame into the new image. The screenshot output was checked after the in-game selection test.
 - Kept the target selector usable at narrow screen widths by clamping its hitbox and truncating its label to the available space.
+- Rebuilt alpha.4 with `check` and all module jars, then started the exact Paper jar on Paper 26.3 build 218. Verified the web page, worlds and players APIs, regular 256×256 PNG tile, and projected PNG tile return successfully. Loaded Fabric 26.3 alpha.4 and joined the same local Paper server.
 
 ### Known limitations
 
@@ -70,7 +71,7 @@ Start here next:
 2. Add a screenshot preview/confirmation before saving selected map regions.
 3. Continue optimizing projected tile transfer and cache behavior if live updates show duplicate or stale images, then verify renderer/resolution changes and Chunky pre-generation.
 
-The shared height-data and projection path is in place; next work should begin with visual runtime review of the resulting terrain.
+The shared height-data and projection path is in place; next work should begin with human visual review of the resulting terrain in a normal interactive game session.
 
 ## Requirements
 
