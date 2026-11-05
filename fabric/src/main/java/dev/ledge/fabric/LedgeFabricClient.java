@@ -16,6 +16,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -190,7 +192,9 @@ public final class LedgeFabricClient implements ClientModInitializer {
     private static void installTile(String worldId, String dimension, int tileX, int tileZ, int renderer, int resolution, int zoom, byte[] png) {
         String key = worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution;
         REQUESTED_TILES.remove(key);
-        Identifier id = Identifier.fromNamespaceAndPath("ledge", "tiles/" + worldId + "/" + dimension + "/r" + resolution + "/m" + renderer + "/z" + zoom + "/" + tileX + "_" + tileZ);
+        Identifier id = Identifier.fromNamespaceAndPath("ledge", "tiles/" + pathSegment(worldId) + "/"
+                + pathSegment(dimension) + "/r" + resolution + "/m" + renderer + "/z" + zoom + "/"
+                + coordinatePath(tileX) + "_" + coordinatePath(tileZ));
         try {
             NativeImage image = NativeImage.read(png);
             if (image.getWidth() != 256 || image.getHeight() != 256) {
@@ -210,8 +214,8 @@ public final class LedgeFabricClient implements ClientModInitializer {
     private static void installProjectedTile(String worldId, String dimension, int tileX, int tileZ, int renderer, int resolution,
                                              int zoom, int topOffset, byte[] png) {
         String key = worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution;
-        Identifier id = Identifier.fromNamespaceAndPath("ledge", "projected/" + worldId + "/" + dimension + "/r" + resolution
-                + "/m" + renderer + "/z" + zoom + "/" + tileX + "_" + tileZ);
+        Identifier id = Identifier.fromNamespaceAndPath("ledge", "projected/" + pathSegment(worldId) + "/" + pathSegment(dimension) + "/r" + resolution
+                + "/m" + renderer + "/z" + zoom + "/" + coordinatePath(tileX) + "_" + coordinatePath(tileZ));
         try {
             NativeImage image = NativeImage.read(png);
             if (image.getWidth() != 256 || image.getHeight() < 1 || image.getHeight() > 4096
@@ -228,6 +232,14 @@ public final class LedgeFabricClient implements ClientModInitializer {
             }
         } catch (IOException ignored) {
         }
+    }
+
+    private static String coordinatePath(int coordinate) {
+        return coordinate < 0 ? "n" + -(long) coordinate : "p" + coordinate;
+    }
+
+    private static String pathSegment(String value) {
+        return HexFormat.of().formatHex(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static final class Transfer {
