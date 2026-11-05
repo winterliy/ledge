@@ -2,6 +2,7 @@ package dev.ledge.glap1;
 
 import dev.ledge.common.FileMapTileStore;
 import dev.ledge.common.MapBlockSample;
+import dev.ledge.common.MapHeightTile;
 import dev.ledge.common.MapRendererType;
 import dev.ledge.common.MapResolution;
 import dev.ledge.common.MapTileKey;
@@ -46,6 +47,7 @@ final class MapTileEngine extends BukkitRunnable {
     private final Map<WorldDimension, Map<Long, Long>> changedChunks = new ConcurrentHashMap<>();
     private final Map<MapTileKey, Long> tileRevisions = new ConcurrentHashMap<>();
     private final Map<MapTileKey, java.util.concurrent.CopyOnWriteArraySet<java.util.function.Consumer<byte[]>>> readyCallbacks = new ConcurrentHashMap<>();
+    private final Map<MapTileKey, java.util.concurrent.CopyOnWriteArraySet<java.util.function.Consumer<MapHeightTile>>> heightCallbacks = new ConcurrentHashMap<>();
     private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.BiConsumer<MapTileKey, byte[]>> tileListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean closed;
     private final ThreadPoolExecutor renderer = new ThreadPoolExecutor(
@@ -93,6 +95,45 @@ final class MapTileEngine extends BukkitRunnable {
             readyCallbacks.remove(key);
             plugin.getLogger().warning("Map render queue is full; dropping tile read " + key);
         }
+    }
+
+    Optional<MapHeightTile> readHeights(MapTileKey key) throws IOException {
+        if (key.renderer() != MapRendererType.SURFACE || readFresh(key).isEmpty()) {
+            request(key);
+            return Optional.empty();
+        }
+        Optional<MapHeightTile> heights = store.readHeights(key);
+        if (heights.isEmpty()) request(key);
+        return heights;
+    }
+
+    void readHeightsOrRequest(MapTileKey key, java.util.function.Consumer<MapHeightTile> callback) {
+        if (closed || key.renderer() != MapRendererType.SURFACE) return;
+        heightCallbacks.computeIfAbsent(key, ignored -> new java.util.concurrent.CopyOnWriteArraySet<>()).add(callback);
+        try {
+            renderer.execute(() -> {
+                try {
+                    Optional<BufferedImage> image = readFresh(key);
+                    Optional<MapHeightTile> heights = image.isPresent() ? store.readHeights(key) : Optional.empty();
+                    if (heights.isPresent()) {
+                        Bukkit.getScheduler().runTask(plugin, () -> deliverHeights(key, heights.get()));
+                    } else {
+                        Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                    }
+                } catch (IOException exception) {
+                    plugin.getLogger().log(Level.WARNING, "Could not read map heights " + key, exception);
+                    Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            heightCallbacks.remove(key);
+            plugin.getLogger().warning("Map render queue is full; dropping height read " + key);
+        }
+    }
+
+    private void deliverHeights(MapTileKey key, MapHeightTile heights) {
+        var callbacks = heightCallbacks.remove(key);
+        if (callbacks != null) callbacks.forEach(callback -> callback.accept(heights));
     }
 
     private static byte[] encodePng(BufferedImage image) throws IOException {
@@ -331,7 +372,10 @@ final class MapTileEngine extends BukkitRunnable {
                 try {
                     BufferedImage image = MapTileRenderers.forType(job.key.renderer())
                             .render(job.samples, job.key.resolution());
+                    MapHeightTile heights = job.key.renderer() == MapRendererType.SURFACE
+                            ? MapHeightTile.fromSurfaceSamples(job.samples, job.key.resolution()) : null;
                     store.write(job.key, image);
+                    if (heights != null) store.writeHeights(job.key, heights);
                     tileRevisions.put(job.key, job.worldRevision);
                     WorldDimension worldDimension = new WorldDimension(job.key.worldId(), job.key.dimensionId());
                     AtomicLong worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong());
@@ -342,10 +386,11 @@ final class MapTileEngine extends BukkitRunnable {
                     }
                     if (fresh) {
                         dirty.remove(job.key);
-                        if (readyCallbacks.containsKey(job.key) || !tileListeners.isEmpty()) {
+                        if (readyCallbacks.containsKey(job.key) || heightCallbacks.containsKey(job.key) || !tileListeners.isEmpty()) {
                             byte[] png = encodePng(image);
                             Bukkit.getScheduler().runTask(plugin, () -> {
                                 deliver(job.key, png);
+                                if (heights != null) deliverHeights(job.key, heights);
                                 tileListeners.forEach(listener -> listener.accept(job.key, png));
                             });
                         }

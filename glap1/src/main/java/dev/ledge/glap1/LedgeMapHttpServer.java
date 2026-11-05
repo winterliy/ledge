@@ -90,6 +90,8 @@ final class LedgeMapHttpServer {
                 respond(exchange, 200, "application/json; charset=utf-8", playersSnapshot);
             } else if ("/tiles".equals(path)) {
                 serveTile(exchange, query(exchange.getRequestURI().getRawQuery()));
+            } else if ("/heights".equals(path)) {
+                serveHeights(exchange, query(exchange.getRequestURI().getRawQuery()));
             } else {
                 respond(exchange, 404, "text/plain; charset=utf-8", "Not found");
             }
@@ -128,6 +130,33 @@ final class LedgeMapHttpServer {
         }
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         respond(exchange, 200, "image/png", bytes.toByteArray());
+    }
+
+    private void serveHeights(HttpExchange exchange, Map<String, String> query) throws IOException {
+        String worldId = required(query, "world");
+        String dimension = required(query, "dimension");
+        if (!knownWorlds.containsKey(worldId + "\u0000" + dimension)) {
+            respond(exchange, 404, "text/plain; charset=utf-8", "Unknown world or dimension");
+            return;
+        }
+        MapRendererType renderer = enumValue(MapRendererType.class, query.getOrDefault("renderer", "SURFACE"));
+        if (renderer != MapRendererType.SURFACE) {
+            respond(exchange, 400, "text/plain; charset=utf-8", "Height data is available for surface maps only");
+            return;
+        }
+        MapResolution resolution = enumValue(MapResolution.class, query.getOrDefault("resolution", "STANDARD"));
+        int zoom = number(query, "zoom", 0, MapTileKey.MIN_ZOOM, MapTileKey.MAX_ZOOM);
+        int x = number(query, "x", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        int z = number(query, "z", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        MapTileKey key = new MapTileKey(worldId, dimension, renderer, resolution, zoom, x, z);
+        var heights = tileEngine.readHeights(key);
+        if (heights.isEmpty()) {
+            exchange.getResponseHeaders().set("Retry-After", "1");
+            respond(exchange, 202, "text/plain; charset=utf-8", "Rendering");
+            return;
+        }
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        respond(exchange, 200, "application/octet-stream", heights.get().toBytes());
     }
 
     private void refreshSnapshots() {
