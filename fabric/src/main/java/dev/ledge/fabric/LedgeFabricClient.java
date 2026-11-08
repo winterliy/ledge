@@ -87,6 +87,13 @@ public final class LedgeFabricClient implements ClientModInitializer {
         if (ClientPlayNetworking.canSend(MapPayload.TYPE)) ClientPlayNetworking.send(new MapPayload(new byte[]{4}));
     }
 
+    /** Raw PNG bytes of received 2D tiles, kept alongside the textures so prints contain only map pixels. */
+    private static final java.util.Map<String, byte[]> TILE_PNGS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static byte[] tilePng(String worldId, String dimension, int renderer, int resolution, int tileX, int tileZ, int zoom) {
+        return TILE_PNGS.get(worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution);
+    }
+
     static Identifier textureFor(String worldId, String dimension, int renderer, int resolution, int tileX, int tileZ, int zoom) {
         return TEXTURES.get(worldId + ":" + dimension + ":" + tileX + ":" + tileZ + ":" + zoom + ":" + renderer + ":" + resolution);
     }
@@ -203,8 +210,11 @@ public final class LedgeFabricClient implements ClientModInitializer {
             }
             Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(() -> "Ledge map tile", image));
             TEXTURES.put(key, id);
+            TILE_PNGS.put(key, png);
             while (TEXTURES.size() > CACHE_LIMIT) {
-                Identifier evicted = TEXTURES.remove(TEXTURES.keySet().iterator().next());
+                String evictedKey = TEXTURES.keySet().iterator().next();
+                TILE_PNGS.remove(evictedKey);
+                Identifier evicted = TEXTURES.remove(evictedKey);
                 Minecraft.getInstance().getTextureManager().release(evicted);
             }
         } catch (IOException ignored) {

@@ -624,38 +624,63 @@ public final class LedgeMapScreen extends Screen {
         return false;
     }
 
+    /** Saves the selected part of the 2D map as an image built from the received tile pixels (no UI). */
     private void saveSelectedScreenshot() {
-        // Capture the selection as fractions of the (virtual) screen now; the screenshot callback runs later,
-        // outside the virtual layout, so pixel coordinates would no longer match.
-        double fx0 = Math.min(selectionStartX, selectionEndX) / Math.max(1.0, width);
-        double fy0 = Math.min(selectionStartY, selectionEndY) / Math.max(1.0, height);
-        double fx1 = Math.max(selectionStartX, selectionEndX) / Math.max(1.0, width);
-        double fy1 = Math.max(selectionStartY, selectionEndY) / Math.max(1.0, height);
-        Screenshot.takeScreenshot(minecraft.gameRenderer.mainRenderTarget(), image -> {
-            int left = clamp((int) Math.round(fx0 * image.getWidth()), 0, image.getWidth());
-            int top = clamp((int) Math.round(fy0 * image.getHeight()), 0, image.getHeight());
-            int right = clamp((int) Math.round(fx1 * image.getWidth()), 0, image.getWidth());
-            int bottom = clamp((int) Math.round(fy1 * image.getHeight()), 0, image.getHeight());
-            if (right - left < 8 || bottom - top < 8) {
-                image.close();
-                showStatus("[Ledge] 인쇄 영역이 너무 작습니다. 더 크게 드래그하세요.");
-                return;
+        int size = mapSize();
+        int left = (width - size) / 2;
+        int top = (height - size) / 2;
+        int sx0 = (int) Math.max(left, Math.min(selectionStartX, selectionEndX));
+        int sy0 = (int) Math.max(top, Math.min(selectionStartY, selectionEndY));
+        int sx1 = (int) Math.min(left + size, Math.max(selectionStartX, selectionEndX));
+        int sy1 = (int) Math.min(top + size, Math.max(selectionStartY, selectionEndY));
+        if (sx1 - sx0 < 4 || sy1 - sy0 < 4) {
+            showStatus("인쇄 영역이 너무 작거나 지도 밖입니다. 지도 위를 더 크게 드래그하세요.");
+            return;
+        }
+        boolean wasThreeDimensional = threeDimensional;
+        threeDimensional = false;
+        int worldX0 = mapWorldX(left, top, size, sx0, sy0);
+        int worldZ0 = mapWorldZ(left, top, size, sx0, sy0);
+        int worldX1 = mapWorldX(left, top, size, sx1, sy1);
+        int worldZ1 = mapWorldZ(left, top, size, sx1, sy1);
+        threeDimensional = wasThreeDimensional;
+        int blocks = tileBlocks();
+        double pixelsPerBlock = 256.0 / blocks;
+        int outWidth = (int) Math.round((worldX1 - worldX0) * pixelsPerBlock);
+        int outHeight = (int) Math.round((worldZ1 - worldZ0) * pixelsPerBlock);
+        if (outWidth < 4 || outHeight < 4 || outWidth > 8192 || outHeight > 8192) {
+            showStatus("인쇄할 수 없는 크기입니다.");
+            return;
+        }
+        int missing = 0;
+        try (NativeImage out = new NativeImage(outWidth, outHeight, true)) {
+            for (int tileX = Math.floorDiv(worldX0, blocks); tileX <= Math.floorDiv(worldX1 - 1, blocks); tileX++) {
+                for (int tileZ = Math.floorDiv(worldZ0, blocks); tileZ <= Math.floorDiv(worldZ1 - 1, blocks); tileZ++) {
+                    byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, zoom);
+                    if (png == null) { missing++; continue; }
+                    try (NativeImage tile = NativeImage.read(png)) {
+                        int tileOriginX = (int) Math.round((tileX * (long) blocks - worldX0) * pixelsPerBlock);
+                        int tileOriginZ = (int) Math.round((tileZ * (long) blocks - worldZ0) * pixelsPerBlock);
+                        for (int py = 0; py < tile.getHeight(); py++) {
+                            int oy = tileOriginZ + py;
+                            if (oy < 0 || oy >= outHeight) continue;
+                            for (int px = 0; px < tile.getWidth(); px++) {
+                                int ox = tileOriginX + px;
+                                if (ox < 0 || ox >= outWidth) continue;
+                                out.setPixel(ox, oy, tile.getPixel(px, py));
+                            }
+                        }
+                    }
+                }
             }
-            NativeImage crop = new NativeImage(right - left, bottom - top, false);
-            image.copyRect(crop, left, top, 0, 0, right - left, bottom - top, false, false);
-            image.close();
             Path directory = minecraft.gameDirectory.toPath().resolve("screenshots");
             String name = "ledge-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".png";
-            try {
-                Files.createDirectories(directory);
-                crop.writeToFile(directory.resolve(name));
-                showStatus("[Ledge] 인쇄 저장: screenshots/" + name);
-            } catch (IOException exception) {
-                showStatus("스크린샷 저장 실패: " + exception.getMessage());
-            } finally {
-                crop.close();
-            }
-        });
+            Files.createDirectories(directory);
+            out.writeToFile(directory.resolve(name));
+            showStatus("인쇄 저장: screenshots/" + name + (missing > 0 ? " (불러오지 않은 타일 " + missing + "개는 비어 있음)" : ""));
+        } catch (IOException exception) {
+            showStatus("인쇄 저장 실패: " + exception.getMessage());
+        }
     }
 
     private String statusMessage;
