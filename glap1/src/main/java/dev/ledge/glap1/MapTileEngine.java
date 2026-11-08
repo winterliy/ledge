@@ -69,7 +69,7 @@ final class MapTileEngine implements Runnable {
         plugin.getLogger().info("Ledge map uses " + workerCount + " region workers.");
         this.maxSamplesPerTick = Math.max(256, plugin.getConfig().getInt("render.max-samples-per-tick", 2048));
         this.diskLoading = plugin.getConfig().getBoolean("render.disk-chunks.enabled", true);
-        this.maxSnapshotsInFlight = Math.max(1, plugin.getConfig().getInt("render.snapshots-in-flight", 64));
+        this.maxSnapshotsInFlight = Math.max(1, plugin.getConfig().getInt("render.snapshots-in-flight", 2048));
     }
 
     FileMapTileStore store() {
@@ -233,21 +233,25 @@ final class MapTileEngine implements Runnable {
         }
     }
 
+    /** Jobs currently gathering chunk data; several advance in the same tick so one waiting job never blocks others. */
+    private final java.util.List<Job> active = new java.util.ArrayList<>();
+    private static final int MAX_ACTIVE_JOBS = 16;
+
     @Override
     public void run() {
+        while (active.size() < MAX_ACTIVE_JOBS) {
+            Job next = pending.poll();
+            if (next == null) break;
+            active.add(next);
+        }
         int remaining = maxSamplesPerTick;
-        while (remaining > 0) {
-            Job job = pending.peek();
-            if (job == null) {
-                return;
-            }
+        for (java.util.Iterator<Job> iterator = active.iterator(); iterator.hasNext() && remaining > 0; ) {
+            Job job = iterator.next();
             int processed = job.sample(remaining);
             remaining -= Math.max(processed, 1);
             if (job.complete()) {
-                pending.poll();
+                iterator.remove();
                 renderAsync(job);
-            } else if (processed == 0) {
-                return;
             }
         }
     }

@@ -7,10 +7,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Folia-style regionized workers for the off-thread part of the map pipeline (sampling snapshots, composing,
- * projecting, PNG encoding and cache I/O). Tiles are grouped into regions of {@value #REGION_TILES}x{@value #REGION_TILES}
- * tiles; a region always goes to the same worker, so neighboring tiles share warm caches and never contend, while
- * different regions are processed in parallel.
+ * Folia-style workers for the off-thread part of the map pipeline (reading region files, composing, projecting,
+ * PNG encoding and cache I/O). A tile always goes to the same worker and each worker keeps its own state, so
+ * workers run in parallel without locks.
  */
 final class RegionWorkers {
     static final int REGION_TILES = 8;
@@ -36,9 +35,9 @@ final class RegionWorkers {
 
     /** Runs the task on the worker that owns the tile's region; throws RejectedExecutionException when full. */
     void execute(MapTileKey key, Runnable task) {
-        int regionX = Math.floorDiv(key.tileX(), REGION_TILES);
-        int regionZ = Math.floorDiv(key.tileZ(), REGION_TILES);
-        int hash = 31 * (31 * key.worldId().hashCode() + regionX) + regionZ + key.zoom() * 7919;
+        // Neighbouring tiles of one view usually share a region, so spread by tile; each worker still owns its
+        // own read-only region-file handles, so workers never share mutable state.
+        int hash = 31 * (31 * key.worldId().hashCode() + key.tileX()) + key.tileZ() + key.zoom() * 7919;
         workers[Math.floorMod(hash, workers.length)].execute(task);
     }
 

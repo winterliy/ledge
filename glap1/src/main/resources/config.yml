@@ -8,7 +8,7 @@ render:
   # Region workers for composing tiles off the server thread; 0 = number of CPU cores minus 2 (at least 2).
   workers: 0
   # Chunk snapshots requested at once (taken on the main thread on Paper, on region threads on Folia).
-  snapshots-in-flight: 64
+  snapshots-in-flight: 2048
   disk-chunks:
     # Draw unloaded but generated chunks by reading region files on the region workers (no server-thread cost).
     enabled: true
