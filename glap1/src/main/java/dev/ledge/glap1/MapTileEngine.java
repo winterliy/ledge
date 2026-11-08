@@ -16,7 +16,6 @@ import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -35,10 +34,16 @@ import java.util.Base64;
 import java.util.logging.Level;
 
 /** Samples loaded world columns on the server thread and composes tiles off-thread. */
-final class MapTileEngine extends BukkitRunnable {
+final class MapTileEngine implements Runnable {
     private final JavaPlugin plugin;
     private final FileMapTileStore store;
     private final int maxSamplesPerTick;
+    private final boolean diskLoading;
+    private final int maxDiskChunksPerTile;
+    private final int maxDiskLoadsInFlight;
+    private final double pauseAboveMspt;
+    private final int maxSnapshotsInFlight;
+    private final java.util.concurrent.atomic.AtomicInteger snapshotsInFlight = new java.util.concurrent.atomic.AtomicInteger();
     private final ConcurrentLinkedQueue<Job> pending = new ConcurrentLinkedQueue<>();
     private final Map<MapTileKey, Job> queued = new ConcurrentHashMap<>();
     private final Set<MapTileKey> rendering = ConcurrentHashMap.newKeySet();
@@ -64,6 +69,11 @@ final class MapTileEngine extends BukkitRunnable {
         this.plugin = plugin;
         this.store = new FileMapTileStore(plugin.getDataFolder().toPath().resolve("tiles"));
         this.maxSamplesPerTick = Math.max(256, plugin.getConfig().getInt("render.max-samples-per-tick", 2048));
+        this.diskLoading = plugin.getConfig().getBoolean("render.disk-chunks.enabled", true);
+        this.maxDiskChunksPerTile = Math.max(0, plugin.getConfig().getInt("render.disk-chunks.per-tile", 256));
+        this.maxDiskLoadsInFlight = Math.max(1, plugin.getConfig().getInt("render.disk-chunks.in-flight", 32));
+        this.pauseAboveMspt = plugin.getConfig().getDouble("render.disk-chunks.pause-above-mspt", 40.0);
+        this.maxSnapshotsInFlight = Math.max(1, plugin.getConfig().getInt("render.snapshots-in-flight", 64));
     }
 
     FileMapTileStore store() {
@@ -85,13 +95,13 @@ final class MapTileEngine extends BukkitRunnable {
                     Optional<BufferedImage> image = readFresh(key);
                     if (image.isPresent()) {
                         byte[] png = encodePng(image.get());
-                        Bukkit.getScheduler().runTask(plugin, () -> deliver(key, png));
+                        Schedulers.global(plugin, () -> deliver(key, png));
                     } else {
                         request(key);
                     }
                 } catch (IOException exception) {
                     plugin.getLogger().log(Level.WARNING, "Could not read map tile " + key, exception);
-                    Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                    Schedulers.global(plugin, () -> request(key));
                 }
             });
         } catch (RejectedExecutionException exception) {
@@ -119,13 +129,13 @@ final class MapTileEngine extends BukkitRunnable {
                     Optional<BufferedImage> image = readFresh(key);
                     Optional<MapProjectedTile> projected = image.isPresent() ? store.readProjected(key) : Optional.empty();
                     if (projected.isPresent()) {
-                        Bukkit.getScheduler().runTask(plugin, () -> deliverProjected(key, projected.get()));
+                        Schedulers.global(plugin, () -> deliverProjected(key, projected.get()));
                     } else {
-                        Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                        Schedulers.global(plugin, () -> request(key));
                     }
                 } catch (IOException exception) {
                     plugin.getLogger().log(Level.WARNING, "Could not read projected map tile " + key, exception);
-                    Bukkit.getScheduler().runTask(plugin, () -> request(key));
+                    Schedulers.global(plugin, () -> request(key));
                 }
             });
         } catch (RejectedExecutionException exception) {
@@ -169,7 +179,7 @@ final class MapTileEngine extends BukkitRunnable {
     void request(MapTileKey key) {
         if (closed) return;
         if (!Bukkit.isPrimaryThread()) {
-            Bukkit.getScheduler().runTask(plugin, () -> request(key));
+            Schedulers.global(plugin, () -> request(key));
             return;
         }
         if (queued.containsKey(key)) {
@@ -307,10 +317,6 @@ final class MapTileEngine extends BukkitRunnable {
     }
 
     /** Upper bound of on-disk chunks loaded for one tile, and of concurrent async loads overall. */
-    private static final int MAX_DISK_CHUNKS_PER_TILE = 256;
-    /** Server-thread time per tick spent copying chunk snapshots for map tiles. */
-    private static final long SNAPSHOT_NANOS_PER_TICK = 5_000_000L;
-    private static final int MAX_DISK_LOADS_IN_FLIGHT = 64;
     private static final AtomicLong DISK_LOADS_IN_FLIGHT = new AtomicLong();
 
     private static long pack(int x, int z) {
@@ -319,7 +325,7 @@ final class MapTileEngine extends BukkitRunnable {
 
     void shutdown() {
         closed = true;
-        cancel();
+        // The scheduled task is cancelled by the plugin.
         renderer.shutdown();
         try {
             if (!renderer.awaitTermination(2, TimeUnit.SECONDS)) {
@@ -404,7 +410,7 @@ final class MapTileEngine extends BukkitRunnable {
                         dirty.remove(job.key);
                         if (readyCallbacks.containsKey(job.key) || projectedCallbacks.containsKey(job.key) || !tileListeners.isEmpty()) {
                             byte[] png = encodePng(image);
-                            Bukkit.getScheduler().runTask(plugin, () -> {
+                            Schedulers.global(plugin, () -> {
                                 deliver(job.key, png);
                                 if (projected != null) deliverProjected(job.key, projected);
                                 tileListeners.forEach(listener -> listener.accept(job.key, png));
@@ -419,7 +425,7 @@ final class MapTileEngine extends BukkitRunnable {
                     rendering.remove(job.key);
                     queued.remove(job.key, job);
                     if (dirty.contains(job.key) && revision(job.key) != job.revision) {
-                        Bukkit.getScheduler().runTask(plugin, () -> request(job.key));
+                        Schedulers.global(plugin, () -> request(job.key));
                     }
                 }
             });
@@ -508,7 +514,7 @@ final class MapTileEngine extends BukkitRunnable {
         private final long revision;
         /** Chunks already generated on disk are loaded asynchronously (never generated) so unvisited areas render. */
         private final Map<Long, java.util.concurrent.CompletableFuture<Chunk>> diskLoads = new java.util.HashMap<>();
-        private final java.util.List<Chunk> ticketed = new java.util.ArrayList<>();
+        private final java.util.List<Chunk> ticketed = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         private final long worldRevision;
         private int index;
 
@@ -531,38 +537,45 @@ final class MapTileEngine extends BukkitRunnable {
          */
         private boolean prepareDiskChunks() {
             if (prepared) return true;
-            int spacing = key.blocksPerSample();
-            int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
+            boolean throttled = pauseAboveMspt > 0 && Schedulers.averageTickMillis() > pauseAboveMspt;
             boolean waiting = false;
-            for (int i = 0; i < samples.length; i++) {
-                int x = key.minBlockX() + (i % side - border) * spacing;
-                int z = key.minBlockZ() + (i / side - border) * spacing;
-                int chunkX = x >> 4;
-                int chunkZ = z >> 4;
-                long chunkKey = pack(chunkX, chunkZ);
-                var load = diskLoads.get(chunkKey);
-                if (load != null) {
-                    if (!load.isDone()) waiting = true;
-                    continue;
-                }
-                if (world.isChunkLoaded(chunkX, chunkZ) || diskLoads.size() >= MAX_DISK_CHUNKS_PER_TILE) continue;
-                if (DISK_LOADS_IN_FLIGHT.get() >= MAX_DISK_LOADS_IN_FLIGHT) {
+            if (diskLoading && !throttled) {
+                int spacing = key.blocksPerSample();
+                int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
+                for (int i = 0; i < samples.length; i++) {
+                    int x = key.minBlockX() + (i % side - border) * spacing;
+                    int z = key.minBlockZ() + (i / side - border) * spacing;
+                    int chunkX = x >> 4;
+                    int chunkZ = z >> 4;
+                    long chunkKey = pack(chunkX, chunkZ);
+                    var load = diskLoads.get(chunkKey);
+                    if (load != null) {
+                        if (!load.isDone()) waiting = true;
+                        continue;
+                    }
+                    if (diskLoads.size() >= maxDiskChunksPerTile) continue;
+                    if (DISK_LOADS_IN_FLIGHT.get() >= maxDiskLoadsInFlight) {
+                        waiting = true;
+                        break;
+                    }
+                    DISK_LOADS_IN_FLIGHT.incrementAndGet();
+                    // Loaded chunks complete immediately; unloaded but generated ones are read from disk, never generated.
+                    diskLoads.put(chunkKey, world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
+                        DISK_LOADS_IN_FLIGHT.decrementAndGet();
+                        if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
+                    }));
                     waiting = true;
-                    break;
                 }
-                DISK_LOADS_IN_FLIGHT.incrementAndGet();
-                diskLoads.put(chunkKey, world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
-                    DISK_LOADS_IN_FLIGHT.decrementAndGet();
-                    if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
-                }));
-                waiting = true;
+            } else if (throttled) {
+                // Server is busy: render what is already loaded instead of reading more chunks.
             }
             prepared = !waiting;
             return prepared;
         }
 
         /** Chunk snapshots taken on the server thread; sampling them happens on the render worker. */
-        private final Map<Long, org.bukkit.ChunkSnapshot> snapshots = new java.util.HashMap<>();
+        private final Map<Long, org.bukkit.ChunkSnapshot> snapshots = new ConcurrentHashMap<>();
+        private final java.util.concurrent.atomic.AtomicInteger outstanding = new java.util.concurrent.atomic.AtomicInteger();
         private java.util.Iterator<Long> pendingChunks;
         private int caveY;
 
@@ -584,23 +597,30 @@ final class MapTileEngine extends BukkitRunnable {
                 pendingChunks = needed.iterator();
                 caveY = caveSliceY(world);
             }
-            // Spend a fixed slice of the tick on snapshots instead of a fixed count.
-            long deadline = System.nanoTime() + SNAPSHOT_NANOS_PER_TICK;
-            int taken = 0;
-            while (pendingChunks.hasNext() && (taken == 0 || System.nanoTime() < deadline)) {
+            // Each snapshot is taken on the thread that owns the chunk (main thread on Paper, its region on Folia).
+            while (pendingChunks.hasNext() && snapshotsInFlight.get() < maxSnapshotsInFlight) {
                 long chunkKey = pendingChunks.next();
                 int chunkX = (int) (chunkKey >> 32);
                 int chunkZ = (int) chunkKey;
-                if (world.isChunkLoaded(chunkX, chunkZ)) {
-                    snapshots.put(chunkKey, world.getChunkAt(chunkX, chunkZ).getChunkSnapshot(true, true, false));
-                }
-                taken++;
+                snapshotsInFlight.incrementAndGet();
+                outstanding.incrementAndGet();
+                Schedulers.region(plugin, world, chunkX, chunkZ, () -> {
+                    try {
+                        if (world.isChunkLoaded(chunkX, chunkZ)) {
+                            snapshots.put(chunkKey, world.getChunkAt(chunkX, chunkZ).getChunkSnapshot(true, true, false));
+                        }
+                    } finally {
+                        snapshotsInFlight.decrementAndGet();
+                        outstanding.decrementAndGet();
+                    }
+                });
             }
-            if (!pendingChunks.hasNext()) {
+            if (!pendingChunks.hasNext() && outstanding.get() == 0) {
                 index = samples.length;
                 releaseChunks();
+                return budget;
             }
-            return budget;
+            return 0;
         }
 
         /** Render-worker step: read every sample from the snapshots. */
@@ -636,8 +656,14 @@ final class MapTileEngine extends BukkitRunnable {
         }
 
         private void releaseChunks() {
-            for (Chunk chunk : ticketed) chunk.removePluginChunkTicket(plugin);
-            ticketed.clear();
+            java.util.List<Chunk> chunks;
+            synchronized (ticketed) {
+                chunks = new java.util.ArrayList<>(ticketed);
+                ticketed.clear();
+            }
+            for (Chunk chunk : chunks) {
+                Schedulers.region(plugin, chunk.getWorld(), chunk.getX(), chunk.getZ(), () -> chunk.removePluginChunkTicket(plugin));
+            }
         }
 
         private void fillMissingBorderHeights() {

@@ -122,7 +122,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
                 if (key.renderer() == dev.ledge.common.MapRendererType.SURFACE) {
                     tiles.readProjectedOrRequest(key, projected -> {
                         sendProjected(player, key, projected);
-                        Bukkit.getScheduler().runTask(plugin, () -> {
+                        Schedulers.global(plugin, () -> {
                             if (player.isOnline() && activeClients.contains(player.getUniqueId())) {
                                 subscribe(player.getUniqueId(), key);
                             }

@@ -13,6 +13,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
     private LedgeFabricBridge fabricBridge;
 
     private BuiltInPregenerator builtInPregenerator;
+    private io.papermc.paper.threadedregions.scheduler.ScheduledTask engineTask;
 
     @Override
     public void onEnable() {
@@ -20,7 +21,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
         tileEngine = new MapTileEngine(this);
         fabricBridge = new LedgeFabricBridge(this, tileEngine);
         fabricBridge.register();
-        tileEngine.runTaskTimer(this, 1L, 1L);
+        engineTask = Schedulers.globalTimer(this, tileEngine, 1L, 1L);
         Bukkit.getPluginManager().registerEvents(new LedgeWorldListener(tileEngine), this);
         builtInPregenerator = new BuiltInPregenerator(this, tileEngine);
         Pregenerator pregenerator = builtInPregenerator;
@@ -42,6 +43,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (engineTask != null) engineTask.cancel();
         if (builtInPregenerator != null) builtInPregenerator.shutdown();
         if (webServer != null) webServer.stop();
         if (fabricBridge != null) fabricBridge.unregister();

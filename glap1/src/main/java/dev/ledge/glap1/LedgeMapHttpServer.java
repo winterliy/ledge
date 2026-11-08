@@ -62,7 +62,7 @@ final class LedgeMapHttpServer {
         server.setExecutor(requests);
         server.createContext("/", this::handle);
         refreshSnapshots();
-        Bukkit.getScheduler().runTaskTimer(plugin, this::refreshSnapshots, 20L, 20L);
+        Schedulers.globalTimer(plugin, this::refreshSnapshots, 20L, 20L);
         server.start();
         plugin.getLogger().info("Ledge map: http://" + host + ":" + port + "/");
     }

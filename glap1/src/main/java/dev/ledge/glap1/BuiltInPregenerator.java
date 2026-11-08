@@ -5,7 +5,7 @@ import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitTask;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,14 +28,14 @@ final class BuiltInPregenerator implements Pregenerator {
     private final MapTileEngine tiles;
     private final File stateFile;
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
-    private final BukkitTask saver;
+    private final ScheduledTask saver;
 
     BuiltInPregenerator(JavaPlugin plugin, MapTileEngine tiles) {
         this.plugin = plugin;
         this.tiles = tiles;
         this.stateFile = new File(plugin.getDataFolder(), "pregen.yml");
         load();
-        this.saver = Bukkit.getScheduler().runTaskTimer(plugin, this::save, 600L, 600L);
+        this.saver = Schedulers.globalTimer(plugin, this::save, 600L, 600L);
     }
 
     @Override
@@ -150,7 +150,7 @@ final class BuiltInPregenerator implements Pregenerator {
         private final long total;
         private final AtomicInteger inFlight = new AtomicInteger();
         private final AtomicLong done;
-        private BukkitTask handle;
+        private ScheduledTask handle;
         private int ring;
         private int step;
         /** Position up to which every issued chunk has finished; resuming restarts here. */
@@ -185,7 +185,7 @@ final class BuiltInPregenerator implements Pregenerator {
         private void run() {
             ring = safeRing;
             step = safeStep;
-            handle = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+            handle = Schedulers.globalTimer(plugin, this::tick, 1L, 1L);
         }
 
         private void stop() {
@@ -203,6 +203,7 @@ final class BuiltInPregenerator implements Pregenerator {
                 safeRing = ring;
                 safeStep = step;
             }
+            if (Schedulers.averageTickMillis() > 45.0) return;
             while (inFlight.get() < MAX_IN_FLIGHT) {
                 int[] chunk = nextChunk();
                 if (chunk == null) break;
