@@ -432,8 +432,15 @@ final class MapTileEngine extends BukkitRunnable {
         return revisions.computeIfAbsent(key, ignored -> new AtomicLong()).get();
     }
 
+    /** Kelp, seagrass and similar ocean-floor plants are the top block in water; draw them as water, not holes. */
+    private static boolean underwaterPlant(String name) {
+        return name.contains("KELP") || name.contains("SEAGRASS") || name.contains("SEA_PICKLE")
+                || name.contains("CORAL") || name.contains("BUBBLE_COLUMN");
+    }
+
     private static int colorFor(Material material) {
         String name = material.name();
+        if (underwaterPlant(name)) return 0xff4f9ec4;
         if (name.contains("WATER") || name.contains("ICE")) return 0xff4f9ec4;
         if (name.contains("LAVA") || name.contains("MAGMA")) return 0xffd65a27;
         if (name.contains("LEAVES") || name.contains("MOSS") || name.contains("GRASS") || name.contains("VINE")) return 0xff5e9b4f;
@@ -452,7 +459,7 @@ final class MapTileEngine extends BukkitRunnable {
     private static int colorFor(Material material, String biomeKey) {
         int base = colorFor(material);
         String biome = biomeKey.toUpperCase(java.util.Locale.ROOT);
-        if (material.name().contains("WATER")) return tint(base, waterTint(biome));
+        if (material.name().contains("WATER") || underwaterPlant(material.name())) return tint(base, waterTint(biome));
         if (material.name().contains("ICE")) return tint(base, biome.contains("FROZEN") ? 0xffc5e4ed : 0xffa7d4e6);
         String block = material.name();
         boolean vegetation = block.contains("LEAVES") || block.contains("MOSS") || block.contains("GRASS")
