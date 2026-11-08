@@ -42,7 +42,7 @@ public record MapProjectedTile(BufferedImage image, int topOffset) {
 
     public byte[] toPng() throws IOException {
         ByteArrayOutputStream png = new ByteArrayOutputStream(16_000);
-        if (!ImageIO.write(image, "png", png)) throw new IOException("PNG writer is not available");
+        png.write(FastPng.encode(image));
         return png.toByteArray();
     }
 

@@ -235,7 +235,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
         if (!player.isOnline() || !activeClients.contains(player.getUniqueId())) return;
         try {
             ByteArrayOutputStream pngBytes = new ByteArrayOutputStream(24_000);
-            if (!ImageIO.write(projected.image(), "png", pngBytes)) return;
+            pngBytes.write(dev.ledge.common.FastPng.encode(projected.image()));
             byte[] png = pngBytes.toByteArray();
             if (png.length == 0 || png.length > MAX_TILE_BYTES) return;
             int parts = (png.length + FRAGMENT_BYTES - 1) / FRAGMENT_BYTES;

@@ -125,9 +125,7 @@ final class LedgeMapHttpServer {
             return;
         }
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(12_000);
-        if (!ImageIO.write(tile.get(), "png", bytes)) {
-            throw new IOException("PNG writer unavailable");
-        }
+        bytes.write(dev.ledge.common.FastPng.encode(tile.get()));
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         respond(exchange, 200, "image/png", bytes.toByteArray());
     }

@@ -146,9 +146,7 @@ final class MapTileEngine implements Runnable {
     }
 
     private static byte[] encodePng(BufferedImage image) throws IOException {
-        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(image, "png", output);
-        return output.toByteArray();
+        return dev.ledge.common.FastPng.encode(image);
     }
 
     private void deliver(MapTileKey key, byte[] png) {
@@ -467,7 +465,13 @@ final class MapTileEngine implements Runnable {
                 || name.contains("CORAL") || name.contains("BUBBLE_COLUMN");
     }
 
+    private static final Map<Material, Integer> BASE_COLORS = new ConcurrentHashMap<>();
+
     private static int colorFor(Material material) {
+        return BASE_COLORS.computeIfAbsent(material, MapTileEngine::computeBaseColor);
+    }
+
+    private static int computeBaseColor(Material material) {
         String name = material.name();
         if (underwaterPlant(name)) return 0xff4f9ec4;
         if (name.contains("WATER") || name.contains("ICE")) return 0xff4f9ec4;

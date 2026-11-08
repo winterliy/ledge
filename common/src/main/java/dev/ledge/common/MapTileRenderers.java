@@ -30,6 +30,7 @@ public final class MapTileRenderers {
             throw new IllegalArgumentException("surface samples must include a one-block border");
         }
         BufferedImage image = new BufferedImage(MapTileKey.TILE_SIZE, MapTileKey.TILE_SIZE, BufferedImage.TYPE_INT_ARGB);
+        int[] pixels = ((java.awt.image.DataBufferInt) image.getRaster().getDataBuffer()).getData();
         int pixelsPerBlock = resolution.pixelsPerBlock();
         for (int blockZ = 0; blockZ < blocksPerSide; blockZ++) {
             for (int blockX = 0; blockX < blocksPerSide; blockX++) {
@@ -49,7 +50,7 @@ public final class MapTileRenderers {
                 int pixelZ = blockZ * pixelsPerBlock;
                 for (int dz = 0; dz < pixelsPerBlock; dz++) {
                     for (int dx = 0; dx < pixelsPerBlock; dx++) {
-                        image.setRGB(pixelX + dx, pixelZ + dz, argb);
+                        pixels[(pixelZ + dz) * MapTileKey.TILE_SIZE + pixelX + dx] = argb;
                     }
                 }
             }
@@ -71,6 +72,7 @@ public final class MapTileRenderers {
             throw new IllegalArgumentException("sample count must match the selected resolution");
         }
         BufferedImage image = new BufferedImage(MapTileKey.TILE_SIZE, MapTileKey.TILE_SIZE, BufferedImage.TYPE_INT_ARGB);
+        int[] pixels = ((java.awt.image.DataBufferInt) image.getRaster().getDataBuffer()).getData();
         int pixelsPerBlock = resolution.pixelsPerBlock();
         for (int blockZ = 0; blockZ < blocksPerSide; blockZ++) {
             for (int blockX = 0; blockX < blocksPerSide; blockX++) {
@@ -80,7 +82,7 @@ public final class MapTileRenderers {
                 int pixelZ = blockZ * pixelsPerBlock;
                 for (int dz = 0; dz < pixelsPerBlock; dz++) {
                     for (int dx = 0; dx < pixelsPerBlock; dx++) {
-                        image.setRGB(pixelX + dx, pixelZ + dz, argb);
+                        pixels[(pixelZ + dz) * MapTileKey.TILE_SIZE + pixelX + dx] = argb;
                     }
                 }
             }

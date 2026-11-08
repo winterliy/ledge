@@ -39,9 +39,7 @@ public final class FileMapTileStore implements MapTileStore {
         Files.createDirectories(file.getParent());
         Path temporary = file.resolveSibling(file.getFileName() + "." + UUID.randomUUID() + ".tmp");
         try {
-            if (!ImageIO.write(image, "png", temporary.toFile())) {
-                throw new IOException("PNG writer is not available");
-            }
+            Files.write(temporary, FastPng.encode(image));
             try {
                 Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
