@@ -308,6 +308,8 @@ final class MapTileEngine extends BukkitRunnable {
 
     /** Upper bound of on-disk chunks loaded for one tile, and of concurrent async loads overall. */
     private static final int MAX_DISK_CHUNKS_PER_TILE = 256;
+    /** Server-thread time per tick spent copying chunk snapshots for map tiles. */
+    private static final long SNAPSHOT_NANOS_PER_TICK = 5_000_000L;
     private static final int MAX_DISK_LOADS_IN_FLIGHT = 64;
     private static final AtomicLong DISK_LOADS_IN_FLIGHT = new AtomicLong();
 
@@ -378,6 +380,7 @@ final class MapTileEngine extends BukkitRunnable {
         try {
             renderer.execute(() -> {
                 try {
+                    job.fillSamples();
                     BufferedImage image = MapTileRenderers.forType(job.key.renderer())
                             .render(job.samples, job.key.resolution());
                     MapHeightTile heights = job.key.renderer() == MapRendererType.SURFACE
@@ -558,42 +561,78 @@ final class MapTileEngine extends BukkitRunnable {
             return prepared;
         }
 
+        /** Chunk snapshots taken on the server thread; sampling them happens on the render worker. */
+        private final Map<Long, org.bukkit.ChunkSnapshot> snapshots = new java.util.HashMap<>();
+        private java.util.Iterator<Long> pendingChunks;
+        private int caveY;
+
+        /**
+         * Server-thread step: after on-disk chunks are loaded, copy each needed chunk once as a snapshot (a bounded
+         * number per tick). The block reads for every sample then run off the server thread in {@link #fillSamples()}.
+         */
         private int sample(int budget) {
             if (!prepareDiskChunks()) return 0;
-            int count = 0;
-            int spacing = key.blocksPerSample();
-            while (index < samples.length && count < budget) {
-                int sampleX = index % side;
-                int sampleZ = index / side;
+            if (pendingChunks == null) {
+                java.util.LinkedHashSet<Long> needed = new java.util.LinkedHashSet<>();
+                int spacing = key.blocksPerSample();
                 int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
-                int x = key.minBlockX() + (sampleX - border) * spacing;
-                int z = key.minBlockZ() + (sampleZ - border) * spacing;
-                int chunkX = x >> 4;
-                int chunkZ = z >> 4;
-                boolean loaded = world.isChunkLoaded(chunkX, chunkZ);
-                if (!loaded) {
-                    samples[index] = new MapBlockSample(0x00000000, world.getMinHeight(), false);
-                } else if (key.renderer() == MapRendererType.CAVE) {
-                    Block surface = world.getHighestBlockAt(x, z);
-                    int caveY = caveSliceY(world);
-                    Block floor = world.getBlockAt(x, caveY, z);
-                    Block above = world.getBlockAt(x, caveY + 1, z);
-                    boolean underground = surface.getY() > caveY + 2;
-                    boolean exposed = underground && floor.getType().isSolid() && !above.getType().isSolid();
-                    samples[index] = new MapBlockSample(colorFor(floor.getType(), floor.getBiome().getKey().getKey()), caveY, exposed);
-                } else {
-                    Block top = world.getHighestBlockAt(x, z);
-                    samples[index] = new MapBlockSample(colorFor(top.getType(), top.getBiome().getKey().getKey()), top.getY(), false);
+                for (int i = 0; i < samples.length; i++) {
+                    int x = key.minBlockX() + (i % side - border) * spacing;
+                    int z = key.minBlockZ() + (i / side - border) * spacing;
+                    needed.add(pack(x >> 4, z >> 4));
                 }
-                loadedSamples[index] = loaded;
-                index++;
-                count++;
+                pendingChunks = needed.iterator();
+                caveY = caveSliceY(world);
             }
-            if (index >= samples.length && key.renderer() == MapRendererType.SURFACE) {
-                fillMissingBorderHeights();
+            // Spend a fixed slice of the tick on snapshots instead of a fixed count.
+            long deadline = System.nanoTime() + SNAPSHOT_NANOS_PER_TICK;
+            int taken = 0;
+            while (pendingChunks.hasNext() && (taken == 0 || System.nanoTime() < deadline)) {
+                long chunkKey = pendingChunks.next();
+                int chunkX = (int) (chunkKey >> 32);
+                int chunkZ = (int) chunkKey;
+                if (world.isChunkLoaded(chunkX, chunkZ)) {
+                    snapshots.put(chunkKey, world.getChunkAt(chunkX, chunkZ).getChunkSnapshot(true, true, false));
+                }
+                taken++;
             }
-            if (index >= samples.length) releaseChunks();
-            return count;
+            if (!pendingChunks.hasNext()) {
+                index = samples.length;
+                releaseChunks();
+            }
+            return budget;
+        }
+
+        /** Render-worker step: read every sample from the snapshots. */
+        private void fillSamples() {
+            int spacing = key.blocksPerSample();
+            int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
+            int minHeight = world.getMinHeight();
+            for (int i = 0; i < samples.length; i++) {
+                int x = key.minBlockX() + (i % side - border) * spacing;
+                int z = key.minBlockZ() + (i / side - border) * spacing;
+                org.bukkit.ChunkSnapshot snapshot = snapshots.get(pack(x >> 4, z >> 4));
+                if (snapshot == null) {
+                    samples[i] = new MapBlockSample(0x00000000, minHeight, false);
+                    loadedSamples[i] = false;
+                    continue;
+                }
+                int localX = x & 15;
+                int localZ = z & 15;
+                int surfaceY = snapshot.getHighestBlockYAt(localX, localZ);
+                if (key.renderer() == MapRendererType.CAVE) {
+                    Material floor = snapshot.getBlockType(localX, caveY, localZ);
+                    Material above = snapshot.getBlockType(localX, caveY + 1, localZ);
+                    boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
+                    samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, caveY, localZ).getKey().getKey()), caveY, exposed);
+                } else {
+                    Material top = snapshot.getBlockType(localX, surfaceY, localZ);
+                    samples[i] = new MapBlockSample(colorFor(top, snapshot.getBiome(localX, surfaceY, localZ).getKey().getKey()), surfaceY, false);
+                }
+                loadedSamples[i] = true;
+            }
+            if (key.renderer() == MapRendererType.SURFACE) fillMissingBorderHeights();
+            snapshots.clear();
         }
 
         private void releaseChunks() {
