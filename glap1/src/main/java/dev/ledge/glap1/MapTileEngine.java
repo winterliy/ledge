@@ -12,6 +12,7 @@ import dev.ledge.common.MapTileProjector;
 import dev.ledge.common.MapWorldConfig;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -305,6 +306,11 @@ final class MapTileEngine extends BukkitRunnable {
                 && blockX < minX + key.blocksPerTile() && blockZ < minZ + key.blocksPerTile();
     }
 
+    /** Upper bound of on-disk chunks loaded for one tile, and of concurrent async loads overall. */
+    private static final int MAX_DISK_CHUNKS_PER_TILE = 256;
+    private static final int MAX_DISK_LOADS_IN_FLIGHT = 16;
+    private static final AtomicLong DISK_LOADS_IN_FLIGHT = new AtomicLong();
+
     private static long pack(int x, int z) {
         return ((long) x << 32) | (z & 0xffffffffL);
     }
@@ -490,6 +496,9 @@ final class MapTileEngine extends BukkitRunnable {
         private final boolean[] loadedSamples;
         private final int side;
         private final long revision;
+        /** Chunks already generated on disk are loaded asynchronously (never generated) so unvisited areas render. */
+        private final Map<Long, java.util.concurrent.CompletableFuture<Chunk>> diskLoads = new java.util.HashMap<>();
+        private final java.util.List<Chunk> ticketed = new java.util.ArrayList<>();
         private final long worldRevision;
         private int index;
 
@@ -513,7 +522,25 @@ final class MapTileEngine extends BukkitRunnable {
                 int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
                 int x = key.minBlockX() + (sampleX - border) * spacing;
                 int z = key.minBlockZ() + (sampleZ - border) * spacing;
-                boolean loaded = world.isChunkLoaded(x >> 4, z >> 4);
+                int chunkX = x >> 4;
+                int chunkZ = z >> 4;
+                boolean loaded = world.isChunkLoaded(chunkX, chunkZ);
+                if (!loaded && diskLoads.size() < MAX_DISK_CHUNKS_PER_TILE) {
+                    long chunkKey = pack(chunkX, chunkZ);
+                    var load = diskLoads.get(chunkKey);
+                    if (load == null) {
+                        if (DISK_LOADS_IN_FLIGHT.get() >= MAX_DISK_LOADS_IN_FLIGHT) break;
+                        DISK_LOADS_IN_FLIGHT.incrementAndGet();
+                        load = world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
+                            DISK_LOADS_IN_FLIGHT.decrementAndGet();
+                            if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
+                        });
+                        diskLoads.put(chunkKey, load);
+                        break;
+                    }
+                    if (!load.isDone()) break;
+                    loaded = world.isChunkLoaded(chunkX, chunkZ);
+                }
                 if (!loaded) {
                     samples[index] = new MapBlockSample(0x00000000, world.getMinHeight(), false);
                 } else if (key.renderer() == MapRendererType.CAVE) {
@@ -535,7 +562,13 @@ final class MapTileEngine extends BukkitRunnable {
             if (index >= samples.length && key.renderer() == MapRendererType.SURFACE) {
                 fillMissingBorderHeights();
             }
+            if (index >= samples.length) releaseChunks();
             return count;
+        }
+
+        private void releaseChunks() {
+            for (Chunk chunk : ticketed) chunk.removePluginChunkTicket(plugin);
+            ticketed.clear();
         }
 
         private void fillMissingBorderHeights() {
