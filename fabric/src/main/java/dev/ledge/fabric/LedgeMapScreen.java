@@ -49,6 +49,9 @@ public final class LedgeMapScreen extends Screen {
     private boolean contextMenuVisible;
     private int contextMenuX;
     private int contextMenuY;
+    /** Marker or Area under the right-click, or null for an empty spot. */
+    private Object contextTarget;
+    private Object editingTarget;
     private int contextWorldX;
     private int contextWorldZ;
     private boolean awaitingArea;
@@ -401,18 +404,21 @@ public final class LedgeMapScreen extends Screen {
             graphics.pose().popMatrix();
         }
         if (contextMenuVisible) {
-            graphics.fill(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + 66, 0xf020252b);
-            graphics.outline(contextMenuX, contextMenuY, 150, 66, 0xff69737d);
-            graphics.text(font, "포인트 표시하기", contextMenuX + 8, contextMenuY + 6, 0xffffffff);
-            graphics.text(font, "영역 채우기", contextMenuX + 8, contextMenuY + 27, 0xffffffff);
-            graphics.text(font, "아웃라인 만들기", contextMenuX + 8, contextMenuY + 48, 0xffffffff);
+            List<String> labels = contextMenuLabels();
+            int menuHeight = contextMenuHeight();
+            graphics.fill(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + menuHeight, 0xf020252b);
+            graphics.outline(contextMenuX, contextMenuY, 150, menuHeight, 0xff69737d);
+            for (int i = 0; i < labels.size(); i++) {
+                boolean danger = labels.get(i).equals("삭제");
+                graphics.text(font, labels.get(i), contextMenuX + 8, contextMenuY + 6 + i * 22, danger ? 0xffff7b7b : 0xffffffff);
+            }
         }
         if (annotationDialog) {
             int dx = (width - 280) / 2;
             int dy = (height - 118) / 2;
             graphics.fill(dx, dy, dx + 280, dy + 118, 0xf014181d);
             graphics.outline(dx, dy, 280, 118, 0xff77828d);
-            graphics.text(font, dialogIsArea ? "영역 이름과 색상" : "포인트 이름과 배너 색상", dx + 12, dy + 10, 0xffffffff);
+            graphics.text(font, (editingTarget != null ? "수정: " : "") + (dialogIsArea ? "영역 이름과 색상" : "포인트 이름과 배너 색상"), dx + 12, dy + 10, 0xffffffff);
             graphics.text(font, "이름: " + dialogName + (colorFieldActive ? "" : "_"), dx + 12, dy + 38, 0xffdce5eb);
             graphics.text(font, "HEX: " + dialogColor + (colorFieldActive ? "_" : ""), dx + 12, dy + 62, 0xffdce5eb);
             graphics.text(font, "Tab으로 입력칸 전환 · Enter 저장 · Esc 취소", dx + 12, dy + 92, 0xffaab5be);
@@ -429,7 +435,7 @@ public final class LedgeMapScreen extends Screen {
             return true;
         }
         if (contextMenuVisible) {
-            boolean insideMenu = x >= contextMenuX && x <= contextMenuX + 150 && y >= contextMenuY && y <= contextMenuY + 66;
+            boolean insideMenu = x >= contextMenuX && x <= contextMenuX + 150 && y >= contextMenuY && y <= contextMenuY + contextMenuHeight();
             if (!insideMenu || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
                 contextMenuVisible = false;
                 return true;
@@ -474,19 +480,31 @@ public final class LedgeMapScreen extends Screen {
             int size = mapSize();
             contextWorldX = mapWorldX((width - size) / 2, (height - size) / 2, size, (int) x, (int) y);
             contextWorldZ = mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) x, (int) y);
+            contextTarget = annotationAt((width - size) / 2, (height - size) / 2, size, x, y);
+            contextMenuY = Math.min(contextMenuY, height - contextMenuHeight() - 10);
             return true;
         }
         if (contextMenuVisible && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             int option = (int) ((y - contextMenuY) / 22);
+            List<String> labels = contextMenuLabels();
             boolean selected = x >= contextMenuX && x <= contextMenuX + 150
-                    && y >= contextMenuY && y <= contextMenuY + 66;
+                    && y >= contextMenuY && y <= contextMenuY + contextMenuHeight() && option < labels.size();
             contextMenuVisible = false;
-            if (selected && option == 0) {
+            if (!selected) return true;
+            if (contextTarget instanceof LocalMapAnnotations.Marker marker) {
+                if (option == 0) openEditDialog(marker, marker.name(), marker.color(), false);
+                else LocalMapAnnotations.removeMarker(marker);
+            } else if (contextTarget instanceof LocalMapAnnotations.Area area) {
+                if (option == 0) openEditDialog(area, area.name(), area.color(), true);
+                else if (option == 1) LocalMapAnnotations.replaceArea(area, new LocalMapAnnotations.Area(area.minX(), area.minZ(),
+                        area.maxX(), area.maxZ(), area.name(), area.color(), !area.filled(), area.points()));
+                else LocalMapAnnotations.removeArea(area);
+            } else if (option == 0) {
                 dialogIsArea = false;
                 dialogX = contextWorldX;
                 dialogZ = contextWorldZ;
                 openAnnotationDialog();
-            } else if (selected && (option == 1 || option == 2)) {
+            } else {
                 areaFilled = option == 1;
                 awaitingArea = true;
             }
@@ -804,8 +822,52 @@ public final class LedgeMapScreen extends Screen {
         minecraft.onTextInputFocusChange(this, true);
     }
 
+    private void openEditDialog(Object target, String name, String color, boolean area) {
+        dialogIsArea = area;
+        openAnnotationDialog();
+        editingTarget = target;
+        dialogName = name;
+        dialogColor = color;
+    }
+
+    private List<String> contextMenuLabels() {
+        if (contextTarget instanceof LocalMapAnnotations.Marker) return List.of("이름·색상 수정", "삭제");
+        if (contextTarget instanceof LocalMapAnnotations.Area area)
+            return List.of("이름·색상 수정", area.filled() ? "아웃라인으로 전환" : "채우기로 전환", "삭제");
+        return List.of("포인트 표시하기", "영역 채우기", "아웃라인 만들기");
+    }
+
+    private int contextMenuHeight() {
+        return contextMenuLabels().size() * 22;
+    }
+
+    /** Finds the marker (within 6 px) or the area containing the clicked map position. */
+    private Object annotationAt(int left, int top, int size, double x, double y) {
+        for (var marker : LocalMapAnnotations.markers()) {
+            if (Math.abs(mapX(left, size, marker.x()) - x) <= 6 && Math.abs(mapZ(top, size, marker.z()) - y) <= 6) return marker;
+        }
+        int worldX = mapWorldX(left, top, size, (int) x, (int) y);
+        int worldZ = mapWorldZ(left, top, size, (int) x, (int) y);
+        var areas = LocalMapAnnotations.areas();
+        for (int i = areas.size() - 1; i >= 0; i--) {
+            if (contains(areas.get(i).points(), worldX + 0.5, worldZ + 0.5)) return areas.get(i);
+        }
+        return null;
+    }
+
+    private static boolean contains(List<LocalMapAnnotations.Point> points, double x, double z) {
+        boolean inside = false;
+        for (int i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+            var a = points.get(i);
+            var b = points.get(j);
+            if ((a.z() > z) != (b.z() > z) && x < (double) (b.x() - a.x()) * (z - a.z()) / (b.z() - a.z()) + a.x()) inside = !inside;
+        }
+        return inside;
+    }
+
     private void closeAnnotationDialog() {
         annotationDialog = false;
+        editingTarget = null;
         minecraft.onTextInputFocusChange(this, false);
     }
 
@@ -818,6 +880,19 @@ public final class LedgeMapScreen extends Screen {
             return;
         }
         String color = dialogColor.toUpperCase(java.util.Locale.ROOT);
+        if (editingTarget instanceof LocalMapAnnotations.Marker marker) {
+            LocalMapAnnotations.replaceMarker(marker, new LocalMapAnnotations.Marker(marker.x(), marker.z(), name, color));
+            editingTarget = null;
+            closeAnnotationDialog();
+            return;
+        }
+        if (editingTarget instanceof LocalMapAnnotations.Area area) {
+            LocalMapAnnotations.replaceArea(area, new LocalMapAnnotations.Area(area.minX(), area.minZ(), area.maxX(), area.maxZ(),
+                    name, color, area.filled(), area.points()));
+            editingTarget = null;
+            closeAnnotationDialog();
+            return;
+        }
         if (dialogIsArea) {
             LocalMapAnnotations.addArea(new LocalMapAnnotations.Area(dialogMinX, dialogMinZ, dialogMaxX, dialogMaxZ,
                     name, color, areaFilled, dialogAreaPoints));

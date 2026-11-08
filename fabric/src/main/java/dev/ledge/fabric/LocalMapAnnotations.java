@@ -52,6 +52,24 @@ final class LocalMapAnnotations {
         save();
     }
 
+    static void replaceMarker(Marker old, Marker updated) {
+        int index = MARKERS.indexOf(old);
+        if (index >= 0) { MARKERS.set(index, updated); save(); }
+    }
+
+    static void removeMarker(Marker marker) {
+        if (MARKERS.remove(marker)) save();
+    }
+
+    static void replaceArea(Area old, Area updated) {
+        int index = AREAS.indexOf(old);
+        if (index >= 0) { AREAS.set(index, updated); save(); }
+    }
+
+    static void removeArea(Area area) {
+        if (AREAS.remove(area)) save();
+    }
+
     private static void save() {
         if (currentFile == null) return;
         try {
