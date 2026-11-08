@@ -5,16 +5,13 @@ web:
   allow-external: false
 render:
   max-samples-per-tick: 2048
-  workers: 1
+  # Region workers for composing tiles off the server thread; 0 = number of CPU cores minus 2 (at least 2).
+  workers: 0
   # Chunk snapshots requested at once (taken on the main thread on Paper, on region threads on Folia).
   snapshots-in-flight: 64
   disk-chunks:
-    # Read already generated but unloaded chunks from disk for map tiles (never generates terrain).
+    # Draw unloaded but generated chunks by reading region files on the region workers (no server-thread cost).
     enabled: true
-    per-tile: 256
-    in-flight: 32
-    # Stop reading extra chunks while the average tick takes longer than this (ms). 0 disables the check.
-    pause-above-mspt: 40.0
 defaults:
   renderer: SURFACE
   resolution: STANDARD

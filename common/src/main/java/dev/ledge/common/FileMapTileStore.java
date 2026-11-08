@@ -116,7 +116,7 @@ public final class FileMapTileStore implements MapTileStore {
         Path path = root.resolve(key.worldId())
                 .resolve(key.dimensionId())
                 .resolve(key.renderer().name().toLowerCase(java.util.Locale.ROOT))
-                .resolve("v4")
+                .resolve("v5")
                 .resolve(key.resolution().name().toLowerCase(java.util.Locale.ROOT))
                 .resolve("z" + key.zoom())
                 .resolve(key.tileX() + "_" + key.tileZ() + ".png")

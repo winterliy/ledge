@@ -39,9 +39,6 @@ final class MapTileEngine implements Runnable {
     private final FileMapTileStore store;
     private final int maxSamplesPerTick;
     private final boolean diskLoading;
-    private final int maxDiskChunksPerTile;
-    private final int maxDiskLoadsInFlight;
-    private final double pauseAboveMspt;
     private final int maxSnapshotsInFlight;
     private final java.util.concurrent.atomic.AtomicInteger snapshotsInFlight = new java.util.concurrent.atomic.AtomicInteger();
     private final ConcurrentLinkedQueue<Job> pending = new ConcurrentLinkedQueue<>();
@@ -58,21 +55,20 @@ final class MapTileEngine implements Runnable {
     private final Map<MapTileKey, java.util.concurrent.CopyOnWriteArraySet<java.util.function.Consumer<MapProjectedTile>>> projectedCallbacks = new ConcurrentHashMap<>();
     private final java.util.concurrent.CopyOnWriteArrayList<java.util.function.BiConsumer<MapTileKey, byte[]>> tileListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean closed;
-    private final ThreadPoolExecutor renderer = new ThreadPoolExecutor(
-            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(128), runnable -> {
-        Thread thread = new Thread(runnable, "Ledge-Tile-Renderer");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final RegionWorkers renderer;
+    /** Each region worker keeps its own region-file reader (Folia-style: no shared state between regions). */
+    private final ThreadLocal<AnvilRegionReader> regionReaders = ThreadLocal.withInitial(AnvilRegionReader::new);
 
     MapTileEngine(JavaPlugin plugin) {
         this.plugin = plugin;
         this.store = new FileMapTileStore(plugin.getDataFolder().toPath().resolve("tiles"));
+        int configuredWorkers = plugin.getConfig().getInt("render.workers", 0);
+        int workerCount = configuredWorkers > 0 ? configuredWorkers
+                : Math.max(2, Runtime.getRuntime().availableProcessors() - 2);
+        this.renderer = new RegionWorkers(workerCount, 256 / workerCount + 16);
+        plugin.getLogger().info("Ledge map uses " + workerCount + " region workers.");
         this.maxSamplesPerTick = Math.max(256, plugin.getConfig().getInt("render.max-samples-per-tick", 2048));
         this.diskLoading = plugin.getConfig().getBoolean("render.disk-chunks.enabled", true);
-        this.maxDiskChunksPerTile = Math.max(0, plugin.getConfig().getInt("render.disk-chunks.per-tile", 256));
-        this.maxDiskLoadsInFlight = Math.max(1, plugin.getConfig().getInt("render.disk-chunks.in-flight", 32));
-        this.pauseAboveMspt = plugin.getConfig().getDouble("render.disk-chunks.pause-above-mspt", 40.0);
         this.maxSnapshotsInFlight = Math.max(1, plugin.getConfig().getInt("render.snapshots-in-flight", 64));
     }
 
@@ -90,7 +86,7 @@ final class MapTileEngine implements Runnable {
         if (closed) return;
         readyCallbacks.computeIfAbsent(key, ignored -> new java.util.concurrent.CopyOnWriteArraySet<>()).add(callback);
         try {
-            renderer.execute(() -> {
+            renderer.execute(key, () -> {
                 try {
                     Optional<BufferedImage> image = readFresh(key);
                     if (image.isPresent()) {
@@ -124,7 +120,7 @@ final class MapTileEngine implements Runnable {
         if (closed || key.renderer() != MapRendererType.SURFACE) return;
         projectedCallbacks.computeIfAbsent(key, ignored -> new java.util.concurrent.CopyOnWriteArraySet<>()).add(callback);
         try {
-            renderer.execute(() -> {
+            renderer.execute(key, () -> {
                 try {
                     Optional<BufferedImage> image = readFresh(key);
                     Optional<MapProjectedTile> projected = image.isPresent() ? store.readProjected(key) : Optional.empty();
@@ -316,8 +312,36 @@ final class MapTileEngine implements Runnable {
                 && blockX < minX + key.blocksPerTile() && blockZ < minZ + key.blocksPerTile();
     }
 
-    /** Upper bound of on-disk chunks loaded for one tile, and of concurrent async loads overall. */
-    private static final AtomicLong DISK_LOADS_IN_FLIGHT = new AtomicLong();
+
+    /** 26.x stores dimensions under dimensions/<namespace>/<path>/region; older layouts use region or DIM-1/DIM1. */
+    private static java.nio.file.Path regionFolder(World world) {
+        java.nio.file.Path folder = world.getWorldFolder().toPath();
+        java.util.List<java.nio.file.Path> candidates = new java.util.ArrayList<>();
+        for (java.nio.file.Path root : java.util.List.of(folder, folder.getParent() == null ? folder : folder.getParent().resolve(Bukkit.getWorlds().get(0).getName()))) {
+            candidates.add(root.resolve("dimensions").resolve(world.getKey().getNamespace()).resolve(world.getKey().getKey()).resolve("region"));
+        }
+        switch (world.getEnvironment()) {
+            case NETHER -> candidates.add(folder.resolve("DIM-1").resolve("region"));
+            case THE_END -> candidates.add(folder.resolve("DIM1").resolve("region"));
+            default -> candidates.add(folder.resolve("region"));
+        }
+        for (java.nio.file.Path candidate : candidates) {
+            if (java.nio.file.Files.isDirectory(candidate)) return candidate;
+        }
+        return candidates.get(0);
+    }
+
+    private static Material material(String name) {
+        if (name == null) return Material.AIR;
+        Material material = Material.matchMaterial(name);
+        return material == null ? Material.STONE : material;
+    }
+
+    private static String biomeKey(String name) {
+        if (name == null) return "plains";
+        int colon = name.indexOf(':');
+        return colon < 0 ? name : name.substring(colon + 1);
+    }
 
     private static long pack(int x, int z) {
         return ((long) x << 32) | (z & 0xffffffffL);
@@ -327,14 +351,6 @@ final class MapTileEngine implements Runnable {
         closed = true;
         // The scheduled task is cancelled by the plugin.
         renderer.shutdown();
-        try {
-            if (!renderer.awaitTermination(2, TimeUnit.SECONDS)) {
-                renderer.shutdownNow();
-            }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            renderer.shutdownNow();
-        }
     }
 
     static String dimensionId(World world) {
@@ -384,7 +400,7 @@ final class MapTileEngine implements Runnable {
     private void renderAsync(Job job) {
         if (!rendering.add(job.key)) return;
         try {
-            renderer.execute(() -> {
+            renderer.execute(job.key, () -> {
                 try {
                     job.fillSamples();
                     BufferedImage image = MapTileRenderers.forType(job.key.renderer())
@@ -512,15 +528,20 @@ final class MapTileEngine implements Runnable {
         private final boolean[] loadedSamples;
         private final int side;
         private final long revision;
-        /** Chunks already generated on disk are loaded asynchronously (never generated) so unvisited areas render. */
-        private final Map<Long, java.util.concurrent.CompletableFuture<Chunk>> diskLoads = new java.util.HashMap<>();
         private final java.util.List<Chunk> ticketed = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         private final long worldRevision;
         private int index;
 
+        private final java.nio.file.Path regionFolder;
+        private final int worldMinY;
+        private final int worldHeight;
+
         private Job(MapTileKey key, World world, long revision) {
             this.key = key;
             this.world = world;
+            this.regionFolder = regionFolder(world);
+            this.worldMinY = world.getMinHeight();
+            this.worldHeight = world.getMaxHeight() - world.getMinHeight();
             this.revision = revision;
             WorldDimension worldDimension = new WorldDimension(key.worldId(), key.dimensionId());
             this.worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong()).get();
@@ -529,49 +550,6 @@ final class MapTileEngine implements Runnable {
             this.loadedSamples = new boolean[samples.length];
         }
 
-        private boolean prepared;
-
-        /**
-         * Loads already generated but unloaded chunks of this tile from disk (never generating terrain), many at
-         * once, before sampling starts. Returns false while loads are still running.
-         */
-        private boolean prepareDiskChunks() {
-            if (prepared) return true;
-            boolean throttled = pauseAboveMspt > 0 && Schedulers.averageTickMillis() > pauseAboveMspt;
-            boolean waiting = false;
-            if (diskLoading && !throttled) {
-                int spacing = key.blocksPerSample();
-                int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
-                for (int i = 0; i < samples.length; i++) {
-                    int x = key.minBlockX() + (i % side - border) * spacing;
-                    int z = key.minBlockZ() + (i / side - border) * spacing;
-                    int chunkX = x >> 4;
-                    int chunkZ = z >> 4;
-                    long chunkKey = pack(chunkX, chunkZ);
-                    var load = diskLoads.get(chunkKey);
-                    if (load != null) {
-                        if (!load.isDone()) waiting = true;
-                        continue;
-                    }
-                    if (diskLoads.size() >= maxDiskChunksPerTile) continue;
-                    if (DISK_LOADS_IN_FLIGHT.get() >= maxDiskLoadsInFlight) {
-                        waiting = true;
-                        break;
-                    }
-                    DISK_LOADS_IN_FLIGHT.incrementAndGet();
-                    // Loaded chunks complete immediately; unloaded but generated ones are read from disk, never generated.
-                    diskLoads.put(chunkKey, world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
-                        DISK_LOADS_IN_FLIGHT.decrementAndGet();
-                        if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
-                    }));
-                    waiting = true;
-                }
-            } else if (throttled) {
-                // Server is busy: render what is already loaded instead of reading more chunks.
-            }
-            prepared = !waiting;
-            return prepared;
-        }
 
         /** Chunk snapshots taken on the server thread; sampling them happens on the render worker. */
         private final Map<Long, org.bukkit.ChunkSnapshot> snapshots = new ConcurrentHashMap<>();
@@ -584,7 +562,6 @@ final class MapTileEngine implements Runnable {
          * number per tick). The block reads for every sample then run off the server thread in {@link #fillSamples()}.
          */
         private int sample(int budget) {
-            if (!prepareDiskChunks()) return 0;
             if (pendingChunks == null) {
                 java.util.LinkedHashSet<Long> needed = new java.util.LinkedHashSet<>();
                 int spacing = key.blocksPerSample();
@@ -623,7 +600,35 @@ final class MapTileEngine implements Runnable {
             return 0;
         }
 
-        /** Render-worker step: read every sample from the snapshots. */
+        private final Map<Long, java.util.Optional<AnvilRegionReader.ChunkColumns>> savedChunks = new java.util.HashMap<>();
+
+        private AnvilRegionReader.ChunkColumns savedChunk(long chunkKey, int chunkX, int chunkZ) {
+            return savedChunks.computeIfAbsent(chunkKey, ignored -> java.util.Optional.ofNullable(
+                    regionReaders.get().read(regionFolder, chunkX, chunkZ, worldMinY, worldHeight))).orElse(null);
+        }
+
+        private MapBlockSample sampleSaved(AnvilRegionReader.ChunkColumns saved, int localX, int localZ) {
+            int surfaceY = saved.surfaceY(localX, localZ);
+            if (key.renderer() == MapRendererType.CAVE) {
+                Material floor = material(saved.blockName(localX, caveY, localZ));
+                Material above = material(saved.blockName(localX, caveY + 1, localZ));
+                boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
+                return new MapBlockSample(colorFor(floor, biomeKey(saved.biomeName(localX, caveY, localZ))), caveY, exposed);
+            }
+            // WORLD_SURFACE counts small decorations (bushes, leaf litter...) that have no map color; look below them.
+            int y = surfaceY;
+            Material top = material(saved.blockName(localX, y, localZ));
+            String biome = biomeKey(saved.biomeName(localX, y, localZ));
+            int color = colorFor(top, biome);
+            for (int depth = 0; depth < 8 && (color >>> 24) == 0 && y > worldMinY; depth++) {
+                y--;
+                top = material(saved.blockName(localX, y, localZ));
+                color = colorFor(top, biome);
+            }
+            return new MapBlockSample(color, y, false);
+        }
+
+        /** Render-worker step: read every sample from the snapshots, or from region files for unloaded chunks. */
         private void fillSamples() {
             int spacing = key.blocksPerSample();
             int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
@@ -631,10 +636,17 @@ final class MapTileEngine implements Runnable {
             for (int i = 0; i < samples.length; i++) {
                 int x = key.minBlockX() + (i % side - border) * spacing;
                 int z = key.minBlockZ() + (i / side - border) * spacing;
-                org.bukkit.ChunkSnapshot snapshot = snapshots.get(pack(x >> 4, z >> 4));
+                long chunkKey = pack(x >> 4, z >> 4);
+                org.bukkit.ChunkSnapshot snapshot = snapshots.get(chunkKey);
                 if (snapshot == null) {
-                    samples[i] = new MapBlockSample(0x00000000, minHeight, false);
-                    loadedSamples[i] = false;
+                    AnvilRegionReader.ChunkColumns saved = diskLoading ? savedChunk(chunkKey, x >> 4, z >> 4) : null;
+                    if (saved == null) {
+                        samples[i] = new MapBlockSample(0x00000000, minHeight, false);
+                        loadedSamples[i] = false;
+                    } else {
+                        samples[i] = sampleSaved(saved, x & 15, z & 15);
+                        loadedSamples[i] = true;
+                    }
                     continue;
                 }
                 int localX = x & 15;
@@ -653,6 +665,7 @@ final class MapTileEngine implements Runnable {
             }
             if (key.renderer() == MapRendererType.SURFACE) fillMissingBorderHeights();
             snapshots.clear();
+            savedChunks.clear();
         }
 
         private void releaseChunks() {
