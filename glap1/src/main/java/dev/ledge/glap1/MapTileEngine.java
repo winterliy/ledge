@@ -308,7 +308,7 @@ final class MapTileEngine extends BukkitRunnable {
 
     /** Upper bound of on-disk chunks loaded for one tile, and of concurrent async loads overall. */
     private static final int MAX_DISK_CHUNKS_PER_TILE = 256;
-    private static final int MAX_DISK_LOADS_IN_FLIGHT = 16;
+    private static final int MAX_DISK_LOADS_IN_FLIGHT = 64;
     private static final AtomicLong DISK_LOADS_IN_FLIGHT = new AtomicLong();
 
     private static long pack(int x, int z) {
@@ -520,7 +520,46 @@ final class MapTileEngine extends BukkitRunnable {
             this.loadedSamples = new boolean[samples.length];
         }
 
+        private boolean prepared;
+
+        /**
+         * Loads already generated but unloaded chunks of this tile from disk (never generating terrain), many at
+         * once, before sampling starts. Returns false while loads are still running.
+         */
+        private boolean prepareDiskChunks() {
+            if (prepared) return true;
+            int spacing = key.blocksPerSample();
+            int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
+            boolean waiting = false;
+            for (int i = 0; i < samples.length; i++) {
+                int x = key.minBlockX() + (i % side - border) * spacing;
+                int z = key.minBlockZ() + (i / side - border) * spacing;
+                int chunkX = x >> 4;
+                int chunkZ = z >> 4;
+                long chunkKey = pack(chunkX, chunkZ);
+                var load = diskLoads.get(chunkKey);
+                if (load != null) {
+                    if (!load.isDone()) waiting = true;
+                    continue;
+                }
+                if (world.isChunkLoaded(chunkX, chunkZ) || diskLoads.size() >= MAX_DISK_CHUNKS_PER_TILE) continue;
+                if (DISK_LOADS_IN_FLIGHT.get() >= MAX_DISK_LOADS_IN_FLIGHT) {
+                    waiting = true;
+                    break;
+                }
+                DISK_LOADS_IN_FLIGHT.incrementAndGet();
+                diskLoads.put(chunkKey, world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
+                    DISK_LOADS_IN_FLIGHT.decrementAndGet();
+                    if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
+                }));
+                waiting = true;
+            }
+            prepared = !waiting;
+            return prepared;
+        }
+
         private int sample(int budget) {
+            if (!prepareDiskChunks()) return 0;
             int count = 0;
             int spacing = key.blocksPerSample();
             while (index < samples.length && count < budget) {
@@ -532,22 +571,6 @@ final class MapTileEngine extends BukkitRunnable {
                 int chunkX = x >> 4;
                 int chunkZ = z >> 4;
                 boolean loaded = world.isChunkLoaded(chunkX, chunkZ);
-                if (!loaded && diskLoads.size() < MAX_DISK_CHUNKS_PER_TILE) {
-                    long chunkKey = pack(chunkX, chunkZ);
-                    var load = diskLoads.get(chunkKey);
-                    if (load == null) {
-                        if (DISK_LOADS_IN_FLIGHT.get() >= MAX_DISK_LOADS_IN_FLIGHT) break;
-                        DISK_LOADS_IN_FLIGHT.incrementAndGet();
-                        load = world.getChunkAtAsync(chunkX, chunkZ, false).whenComplete((chunk, failure) -> {
-                            DISK_LOADS_IN_FLIGHT.decrementAndGet();
-                            if (chunk != null && chunk.addPluginChunkTicket(plugin)) ticketed.add(chunk);
-                        });
-                        diskLoads.put(chunkKey, load);
-                        break;
-                    }
-                    if (!load.isDone()) break;
-                    loaded = world.isChunkLoaded(chunkX, chunkZ);
-                }
                 if (!loaded) {
                     samples[index] = new MapBlockSample(0x00000000, world.getMinHeight(), false);
                 } else if (key.renderer() == MapRendererType.CAVE) {

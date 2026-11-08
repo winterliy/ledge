@@ -3,7 +3,7 @@
 Ledge is a shared Minecraft map project with two platform adapters:
 
 - `common`: platform-independent map coordinates, tile keys, render styles, resolutions, marker/area models, and PNG tile storage.
-- `glap1`: Paper/GLAP1 plugin with a localhost web map, server-side tile renderer, block-change refresh, and optional Chunky API integration.
+- `glap1`: Paper/GLAP1 plugin with a localhost web map, server-side tile renderer, block-change refresh, and a built-in terrain pre-generator.
 - `fabric`: Fabric client mod with a configurable Controls key, full-screen tile viewer, map panning/zoom, coordinate readout, player marker toggle, and selected-region screenshots.
 
 ## Current progress
@@ -21,7 +21,7 @@ This is an **early development preview (`0.1.0-alpha.4`)**, not a complete map p
 - The GLAP cave renderer samples an underground horizontal slice at one quarter of the world's height range and shows solid blocks exposed to non-solid space. Unloaded chunks remain transparent. Surface vegetation and water colors receive a biome-specific tint.
 - Surface tiles use height gradients from four neighbors to add directional relief shading shared by the web map and Fabric client. A one-sample border reads adjacent loaded terrain so the shading does not stop at tile edges; unloaded border chunks reuse the nearest sampled height without force-loading.
 - Placing, breaking, burning, and explosion changes version the affected chunks instead of walking every cached zoom variant. Active Fabric subscriptions rerender, and cached inactive variants are checked against chunk versions on the next request.
-- Optional Chunky 1.5.4 public API integration when Chunky is separately installed. Commands: `/ledge pregen start <world> <radius>`, `/ledge pregen pause <world>`, `/ledge pregen continue <world>`, and `/ledge pregen cancel <world>`.
+- Built-in terrain pre-generator modelled on Chunky (no separate plugin needed): `/ledge pregen start <world> <radius> [square|circle] [centerX centerZ]`, `/ledge pregen pause|continue|cancel <world>`, `/ledge pregen status`. Chunks are generated from the center outward with bounded async loads; progress is saved to `plugins/Ledge/pregen.yml` and survives restarts (tasks return paused). Each generated chunk refreshes the map.
 - Fabric client opens the full-screen map with `Z` by default; the binding is registered in Controls.
 - Fabric requests server world settings and nearby tiles over the `ledge:map` play channel. PNG responses are split into bounded fragments, reassembled with transfer limits, and held in a capped, world/dimension-aware client texture cache.
 - Fabric can cycle through the server's loaded world/dimension targets from the map header. Each request is limited to tiles within eight tile steps of the player's coordinates, and uses that target's configured renderer and resolution.
@@ -59,7 +59,7 @@ This is an **early development preview (`0.1.0-alpha.4`)**, not a complete map p
 - Cave mode shows one fixed-height slice, not a complete 3D cave survey. Biome tints improve the basic material palette but do not reproduce Minecraft's exact texture and map-color rules.
 - Web player markers are dots without skin-face icons. Chat, game time/date, and share links are intentionally omitted.
 - Client annotations are local and are not yet sent to the server or shown in the web map.
-- The renderer currently samples the top block of already-loaded columns. Chunky pre-generation is optional and is not automatically started by opening the map.
+- The renderer currently samples the top block of already-loaded columns. Already generated chunks that are not loaded are read from disk for map tiles; ungenerated terrain needs `/ledge pregen`.
 - Dynmap code has not been copied; its behavior and tile concepts are being reimplemented for the current target. The Xaero implementation has not been copied or integrated.
 - A human visual review on a normal interactive game session remains outstanding; the recorded control checks were automated in a local client/server session.
 
@@ -78,7 +78,6 @@ The shared height-data and projection path is in place; next work should begin w
 - JDK 25
 - Gradle Wrapper (included)
 - Minecraft 26.3, Fabric Loader/API, and a compatible Paper/GLAP1 server
-- Optional: Chunky plugin 1.5.4 or a compatible release
 
 ## Configuration
 
@@ -126,4 +125,4 @@ Artifacts are written under `common/build/libs/`, `glap1/build/libs/`, and `fabr
 - Chunky integration/API reference: https://github.com/pop4959/Chunky (GPL-3.0-only)
 - Xaero World Map interaction reference: https://modrinth.com/mod/xaeros-world-map (ARR)
 
-Chunky is used as an optional separate plugin through its public API; it is not bundled in Ledge. Xaero code is not redistributed. Check each upstream license before incorporating or distributing upstream implementation code.
+Ledge's built-in pre-generator follows Chunky's task model (GPL-3.0-only); Chunky itself is not required or bundled. Xaero code is not redistributed. Check each upstream license before incorporating or distributing upstream implementation code.

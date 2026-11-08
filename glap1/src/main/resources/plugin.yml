@@ -3,11 +3,10 @@ version: '${version}'
 main: dev.ledge.glap1.LedgeGlap1Plugin
 api-version: '26.3'
 description: GLAP1 server adapter for Ledge.
-softdepend: [Chunky]
 commands:
   ledge:
-    description: Manage Ledge map rendering and Chunky tasks.
-    usage: /ledge pregen <start|pause|continue|cancel> [world] [radius]
+    description: Manage Ledge map rendering and terrain pre-generation.
+    usage: /ledge pregen <start|pause|continue|cancel|status> [world] [radius] [square|circle] [centerX centerZ]
     permission: ledge.admin
 permissions:
   ledge.admin:

@@ -275,10 +275,10 @@ public final class LedgeMapScreen extends Screen {
                 }
                 var texture = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
                         tileX, tileZ, zoom);
-                if (texture == null) {
+                if (texture == null && !drawFallbackTile(graphics, tileX, tileZ, x, z, tileSize)) {
                     graphics.fill(x, z, x + tileSize, z + tileSize, 0xff252c32);
                     graphics.centeredText(font, "불러오는 중", x + tileSize / 2, z + tileSize / 2, 0xffb8c2ca);
-                } else {
+                } else if (texture != null) {
                     graphics.blit(texture, x, z, x + tileSize, z + tileSize, 0f, 1f, 0f, 1f);
                 }
             }
@@ -372,7 +372,7 @@ public final class LedgeMapScreen extends Screen {
         }
         String hint = printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
                 : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
-                : selectingArea ? "자유 선택 · Shift: 직선 구간 · 놓으면 완료" :
+                : selectingArea ? "자유 선택 · Shift: 가로/세로 직선 · 놓으면 완료" :
                 "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
         graphics.centeredText(font, hint, width / 2, height - 18, 0xffb8c2ca);
         if (statusMessage != null && System.currentTimeMillis() < statusUntil) {
@@ -564,7 +564,7 @@ public final class LedgeMapScreen extends Screen {
                     mapWorldX((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()),
                     mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()));
             if (minecraft.hasShiftDown()) {
-                straightEndpoint = point;
+                straightEndpoint = axisAligned(point);
                 return true;
             }
             if (straightEndpoint != null) {
@@ -620,7 +620,7 @@ public final class LedgeMapScreen extends Screen {
                     mapWorldX((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()),
                     mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) event.x(), (int) event.y()));
             if (minecraft.hasShiftDown()) {
-                straightEndpoint = end;
+                straightEndpoint = axisAligned(end);
                 appendAreaPoint(straightEndpoint);
             } else {
                 if (straightEndpoint != null) appendAreaPoint(straightEndpoint);
@@ -984,6 +984,42 @@ public final class LedgeMapScreen extends Screen {
         graphics.pose().translate(-centerX, -centerY);
     }
 
+    /**
+     * Xaero-style placeholder while a tile of the current zoom is loading: stretch the matching part of an
+     * already received coarser tile, or shrink four finer tiles into the cell.
+     */
+    private boolean drawFallbackTile(GuiGraphicsExtractor graphics, int tileX, int tileZ, int x, int z, int tileSize) {
+        for (int level = 1; level <= 3 && zoom + level <= 12; level++) {
+            int scale = 1 << level;
+            int parentX = Math.floorDiv(tileX, scale);
+            int parentZ = Math.floorDiv(tileZ, scale);
+            var parent = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
+                    parentX, parentZ, zoom + level);
+            if (parent == null) continue;
+            float u0 = (tileX - parentX * scale) / (float) scale;
+            float v0 = (tileZ - parentZ * scale) / (float) scale;
+            graphics.blit(parent, x, z, x + tileSize, z + tileSize, u0, u0 + 1f / scale, v0, v0 + 1f / scale);
+            return true;
+        }
+        if (zoom == 0) return false;
+        boolean drewAny = false;
+        int half = tileSize / 2;
+        for (int dx = 0; dx < 2; dx++) {
+            for (int dz = 0; dz < 2; dz++) {
+                var child = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
+                        tileX * 2 + dx, tileZ * 2 + dz, zoom - 1);
+                if (child == null) continue;
+                int cx = x + dx * half;
+                int cz = z + dz * half;
+                int cx1 = dx == 0 ? x + half : x + tileSize;
+                int cz1 = dz == 0 ? z + half : z + tileSize;
+                graphics.blit(child, cx, cz, cx1, cz1, 0f, 1f, 0f, 1f);
+                drewAny = true;
+            }
+        }
+        return drewAny;
+    }
+
     private int panOffsetX() { return threeDimensional ? 0 : (int) Math.round(dragX); }
 
     private int panOffsetZ() { return threeDimensional ? 0 : (int) Math.round(dragY); }
@@ -994,6 +1030,15 @@ public final class LedgeMapScreen extends Screen {
 
     private int mapZ(int top, int size, int worldZ) {
         return top + panOffsetZ() + (int) ((worldZ - (centerZ - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
+    }
+
+    /** With Shift held, the segment from the last point runs only horizontally or vertically. */
+    private LocalMapAnnotations.Point axisAligned(LocalMapAnnotations.Point point) {
+        if (areaPoints.isEmpty()) return point;
+        var last = areaPoints.get(areaPoints.size() - 1);
+        return Math.abs(point.x() - last.x()) >= Math.abs(point.z() - last.z())
+                ? new LocalMapAnnotations.Point(point.x(), last.z())
+                : new LocalMapAnnotations.Point(last.x(), point.z());
     }
 
     private void appendAreaPoint(LocalMapAnnotations.Point point) {

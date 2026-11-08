@@ -12,6 +12,8 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
     private LedgeMapHttpServer webServer;
     private LedgeFabricBridge fabricBridge;
 
+    private BuiltInPregenerator builtInPregenerator;
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -20,9 +22,10 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
         fabricBridge.register();
         tileEngine.runTaskTimer(this, 1L, 1L);
         Bukkit.getPluginManager().registerEvents(new LedgeWorldListener(tileEngine), this);
-        ChunkyBridge chunky = ChunkyBridge.connect(this);
+        builtInPregenerator = new BuiltInPregenerator(this, tileEngine);
+        Pregenerator pregenerator = builtInPregenerator;
         if (getCommand("ledge") != null) {
-            LedgeCommand command = new LedgeCommand(chunky);
+            LedgeCommand command = new LedgeCommand(pregenerator);
             getCommand("ledge").setExecutor(command);
             getCommand("ledge").setTabCompleter(command);
         }
@@ -39,6 +42,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (builtInPregenerator != null) builtInPregenerator.shutdown();
         if (webServer != null) webServer.stop();
         if (fabricBridge != null) fabricBridge.unregister();
         if (tileEngine != null) tileEngine.shutdown();
