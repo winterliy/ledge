@@ -1,5 +1,7 @@
 package dev.ledge.fabric;
 
+import com.mojang.blaze3d.platform.InputConstants;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -132,8 +134,8 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private void requestCurrentTiles() {
-        for (int x = centerX - 1; x <= centerX + 1; x++) {
-            for (int z = centerZ - 1; z <= centerZ + 1; z++) {
+        for (int x = centerX - 2; x <= centerX + 2; x++) {
+            for (int z = centerZ - 2; z <= centerZ + 2; z++) {
                 LedgeFabricClient.requestTile(targetWorldId, dimension, targetRenderer, targetResolution, x, z, zoom);
             }
         }
@@ -173,10 +175,67 @@ public final class LedgeMapScreen extends Screen {
         requestCurrentTiles();
     }
 
+
+    // The map UI is laid out for at least 760x420 GUI units; on large GUI scales it is drawn smaller
+    // and mouse input is mapped into the same virtual space.
+    private static final float MIN_LAYOUT_WIDTH = 760f;
+    private static final float MIN_LAYOUT_HEIGHT = 420f;
+    private int realWidth;
+    private int realHeight;
+    private float activeScale = 1f;
+
+    private float enterVirtual() {
+        realWidth = width;
+        realHeight = height;
+        activeScale = Math.min(1f, Math.min(realWidth / MIN_LAYOUT_WIDTH, realHeight / MIN_LAYOUT_HEIGHT));
+        width = Math.round(realWidth / activeScale);
+        height = Math.round(realHeight / activeScale);
+        return activeScale;
+    }
+
+    private void exitVirtual() {
+        width = realWidth;
+        height = realHeight;
+    }
+
+    private MouseButtonEvent virtualEvent(MouseButtonEvent event, float scale) {
+        return new MouseButtonEvent(event.x() / scale, event.y() / scale, event.buttonInfo());
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+        float scale = enterVirtual();
+        try {
+            graphics.pose().pushMatrix();
+            graphics.pose().scale(scale, scale);
+            renderVirtual(graphics, Math.round(mouseX / scale), Math.round(mouseY / scale), delta);
+            graphics.pose().popMatrix();
+        } finally {
+            exitVirtual();
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        float scale = enterVirtual();
+        try { return clickedVirtual(virtualEvent(event, scale), doubleClick); } finally { exitVirtual(); }
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        float scale = enterVirtual();
+        try { return draggedVirtual(virtualEvent(event, scale), deltaX / scale, deltaY / scale); } finally { exitVirtual(); }
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        float scale = enterVirtual();
+        try { return releasedVirtual(virtualEvent(event, scale)); } finally { exitVirtual(); }
+    }
+
+    private void renderVirtual(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         graphics.fill(0, 0, width, height, 0xff10151a);
-        int mapSize = Math.min(height - 36, width - 300);
+        int mapSize = Math.min(height - 100, width - 300);
         mapSize = Math.max(96, mapSize);
         int tileSize = mapSize / 3;
         int left = (width - mapSize) / 2;
@@ -184,10 +243,14 @@ public final class LedgeMapScreen extends Screen {
         boolean projectedSurface = threeDimensional && targetRenderer == 0;
         pushMapTransform(graphics, top, mapSize);
         if (projectedSurface) graphics.pose().popMatrix();
-        for (int tileX = centerX - 1; tileX <= centerX + 1; tileX++) {
-            for (int tileZ = centerZ - 1; tileZ <= centerZ + 1; tileZ++) {
-                int x = left + (tileX - centerX + 1) * tileSize;
-                int z = top + (tileZ - centerZ + 1) * tileSize;
+        int panX = panOffsetX();
+        int panZ = panOffsetZ();
+        int range = projectedSurface ? 1 : 2;
+        if (!projectedSurface) graphics.enableScissor(left, top, left + tileSize * 3, top + tileSize * 3);
+        for (int tileX = centerX - range; tileX <= centerX + range; tileX++) {
+            for (int tileZ = centerZ - range; tileZ <= centerZ + range; tileZ++) {
+                int x = left + (tileX - centerX + 1) * tileSize + panX;
+                int z = top + (tileZ - centerZ + 1) * tileSize + panZ;
                 if (projectedSurface) {
                     var projected = LedgeFabricClient.projectedTextureFor(targetWorldId, dimension, targetRenderer,
                             targetResolution, tileX, tileZ, zoom);
@@ -203,7 +266,8 @@ public final class LedgeMapScreen extends Screen {
                     float textureScale = tileSize / 256.0f;
                     int projectedY = (int) Math.round(centerY + (dx + dz) / 4.0 - projected.topOffset() * textureScale);
                     int projectedHeight = Math.max(1, Math.round(projected.height() * textureScale));
-                    graphics.blit(projected.texture(), projectedX, projectedY, tileSize, projectedHeight, 0f, 0f, 1f, 1f);
+                    // blit(texture, x0, y0, x1, y1, u0, u1, v0, v1) takes corner coordinates, not a size.
+                    graphics.blit(projected.texture(), projectedX, projectedY, projectedX + tileSize, projectedY + projectedHeight, 0f, 1f, 0f, 1f);
                     continue;
                 }
                 var texture = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
@@ -212,18 +276,21 @@ public final class LedgeMapScreen extends Screen {
                     graphics.fill(x, z, x + tileSize, z + tileSize, 0xff252c32);
                     graphics.centeredText(font, "불러오는 중", x + tileSize / 2, z + tileSize / 2, 0xffb8c2ca);
                 } else {
-                    graphics.blit(texture, x, z, tileSize, tileSize, 0f, 0f, 1f, 1f);
+                    graphics.blit(texture, x, z, x + tileSize, z + tileSize, 0f, 1f, 0f, 1f);
                 }
             }
         }
+        if (!projectedSurface) graphics.disableScissor();
         if (projectedSurface) pushMapTransform(graphics, top, mapSize);
-        graphics.outline(left, top, left + tileSize * 3, top + tileSize * 3, 0xff59636c);
+        graphics.outline(left, top, tileSize * 3, tileSize * 3, 0xff59636c);
+        // Markers and annotations stay inside the map frame.
+        if (!projectedSurface) graphics.enableScissor(left, top, left + tileSize * 3, top + tileSize * 3);
         var playerTarget = LedgeFabricClient.serverTarget();
         if (minecraft.player != null && LedgeFabricClient.showPlayerMarker() && playerTarget != null
                 && playerTarget.worldId().equals(targetWorldId) && playerTarget.dimension().equals(dimension)) {
             int blocks = tileBlocks();
-            double markerX = left + mapSize / 2.0 + (minecraft.player.getX() - (centerX * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
-            double markerZ = top + mapSize / 2.0 + (minecraft.player.getZ() - (centerZ * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
+            double markerX = panX + left + mapSize / 2.0 + (minecraft.player.getX() - (centerX * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
+            double markerZ = panZ + top + mapSize / 2.0 + (minecraft.player.getZ() - (centerZ * blocks + blocks / 2.0)) * mapSize / (blocks * 3.0);
             if (projectedSurface) {
                 double elevation = (minecraft.player.getY() - 64.0) * mapSize / (blocks * 3.0) / 4.0;
                 markerX -= elevation * 2.0;
@@ -252,10 +319,11 @@ public final class LedgeMapScreen extends Screen {
             graphics.fill(x - 4, z - 4, x + 5, z + 5, 0xff000000 | rgb);
             graphics.text(font, marker.name(), x + 6, z - 5, 0xffffffff);
         }
+        if (!projectedSurface) graphics.disableScissor();
         graphics.pose().popMatrix();
-        graphics.fill(10, 10, 190, coordinatesVisible ? 92 : 42, 0xd9000000);
-        graphics.text(font, "좌표", 20, 18, 0xffffffff);
-        graphics.text(font, "×", 172, 18, 0xffffffff);
+        graphics.fill(10, 44, 190, coordinatesVisible ? 126 : 76, 0xd9000000);
+        graphics.text(font, "좌표", 20, 52, 0xffffffff);
+        graphics.text(font, coordinatesVisible ? "×" : "+", 172, 52, 0xffffffff);
         graphics.fill(width - 196, 10, width - 112, 36, 0xd9000000);
         graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", width - 190, 18, 0xffffffff);
         graphics.fill(width - 286, 10, width - 258, 36, 0xd9000000);
@@ -264,7 +332,7 @@ public final class LedgeMapScreen extends Screen {
         graphics.centeredText(font, "+", width - 238, 18, 0xffffffff);
         graphics.fill(width - 334, 10, width - 290, 36, 0xd9000000);
         graphics.centeredText(font, threeDimensional ? "3D" : "2D", width - 312, 18, 0xffffffff);
-        int targetButtonLeft = Math.max(10, width - 472);
+        int targetButtonLeft = 10;
         int targetButtonRight = width - 340;
         graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0xd9000000);
         String shownTarget = targetLabel.isEmpty() ? "차원 선택" : targetLabel;
@@ -282,17 +350,19 @@ public final class LedgeMapScreen extends Screen {
             MapPosition mapMouse = unprojectMapPosition(mouseX, mouseY, left, top, mapSize);
             if (mapMouse.x() >= left && mapMouse.x() < left + mapSize
                     && mapMouse.y() >= top && mapMouse.y() < top + mapSize) {
-                worldX = (centerX - 1) * tileBlocks() + (int) ((mapMouse.x() - left) * tileBlocks() * 3.0 / mapSize);
-                worldZ = (centerZ - 1) * tileBlocks() + (int) ((mapMouse.y() - top) * tileBlocks() * 3.0 / mapSize);
+                worldX = (centerX - 1) * tileBlocks() + (int) Math.floor((mapMouse.x() - left - panOffsetX()) * tileBlocks() * 3.0 / mapSize);
+                worldZ = (centerZ - 1) * tileBlocks() + (int) Math.floor((mapMouse.y() - top - panOffsetZ()) * tileBlocks() * 3.0 / mapSize);
             } else {
                 worldX = pos.getX();
                 worldZ = pos.getZ();
             }
-            graphics.text(font, "X " + worldX, 20, 38, 0xffdce5eb);
-            graphics.text(font, "Y " + pos.getY(), 20, 52, 0xffdce5eb);
-            graphics.text(font, "Z " + worldZ, 20, 66, 0xffdce5eb);
+            graphics.text(font, "X " + worldX, 20, 72, 0xffdce5eb);
+            graphics.text(font, "Y " + pos.getY(), 20, 86, 0xffdce5eb);
+            graphics.text(font, "Z " + worldZ, 20, 100, 0xffdce5eb);
         }
-        String hint = selectingArea ? "자유 선택 · Shift: 직선 구간 · 놓으면 완료" :
+        String hint = printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
+                : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
+                : selectingArea ? "자유 선택 · Shift: 직선 구간 · 놓으면 완료" :
                 "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
         graphics.centeredText(font, hint, width / 2, height - 18, 0xffb8c2ca);
         if (selectingPrint) {
@@ -301,7 +371,7 @@ public final class LedgeMapScreen extends Screen {
             int ex = (int) Math.max(selectionStartX, selectionEndX);
             int ey = (int) Math.max(selectionStartY, selectionEndY);
             graphics.fill(sx, sy, ex, ey, 0x553c91e6);
-            graphics.outline(sx, sy, ex, ey, 0xff66b1ff);
+            graphics.outline(sx, sy, ex - sx, ey - sy, 0xff66b1ff);
         }
         if (selectingArea) {
             pushMapTransform(graphics, top, mapSize);
@@ -327,7 +397,7 @@ public final class LedgeMapScreen extends Screen {
         }
         if (contextMenuVisible) {
             graphics.fill(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + 66, 0xf020252b);
-            graphics.outline(contextMenuX, contextMenuY, contextMenuX + 150, contextMenuY + 66, 0xff69737d);
+            graphics.outline(contextMenuX, contextMenuY, 150, 66, 0xff69737d);
             graphics.text(font, "포인트 표시하기", contextMenuX + 8, contextMenuY + 6, 0xffffffff);
             graphics.text(font, "영역 채우기", contextMenuX + 8, contextMenuY + 27, 0xffffffff);
             graphics.text(font, "아웃라인 만들기", contextMenuX + 8, contextMenuY + 48, 0xffffffff);
@@ -336,7 +406,7 @@ public final class LedgeMapScreen extends Screen {
             int dx = (width - 280) / 2;
             int dy = (height - 118) / 2;
             graphics.fill(dx, dy, dx + 280, dy + 118, 0xf014181d);
-            graphics.outline(dx, dy, dx + 280, dy + 118, 0xff77828d);
+            graphics.outline(dx, dy, 280, 118, 0xff77828d);
             graphics.text(font, dialogIsArea ? "영역 이름과 색상" : "포인트 이름과 배너 색상", dx + 12, dy + 10, 0xffffffff);
             graphics.text(font, "이름: " + dialogName + (colorFieldActive ? "" : "_"), dx + 12, dy + 38, 0xffdce5eb);
             graphics.text(font, "HEX: " + dialogColor + (colorFieldActive ? "_" : ""), dx + 12, dy + 62, 0xffdce5eb);
@@ -344,8 +414,7 @@ public final class LedgeMapScreen extends Screen {
         }
     }
 
-    @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+    private boolean clickedVirtual(MouseButtonEvent event, boolean doubleClick) {
         double x = event.x();
         double y = event.y();
         if (annotationDialog) {
@@ -354,11 +423,18 @@ public final class LedgeMapScreen extends Screen {
             else if (y >= dy + 56 && y <= dy + 82) colorFieldActive = true;
             return true;
         }
-        if (x >= 160 && x <= 188 && y >= 10 && y <= 36) {
+        if (contextMenuVisible) {
+            boolean insideMenu = x >= contextMenuX && x <= contextMenuX + 150 && y >= contextMenuY && y <= contextMenuY + 66;
+            if (!insideMenu || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+                contextMenuVisible = false;
+                return true;
+            }
+        }
+        if (coordinatesVisible && x >= 160 && x <= 188 && y >= 44 && y <= 70) {
             coordinatesVisible = false;
             return true;
         }
-        if (!coordinatesVisible && x >= 10 && x <= 190 && y >= 10 && y <= 44) {
+        if (!coordinatesVisible && x >= 10 && x <= 190 && y >= 44 && y <= 76) {
             coordinatesVisible = true;
             return true;
         }
@@ -378,7 +454,7 @@ public final class LedgeMapScreen extends Screen {
             threeDimensional = !threeDimensional;
             return true;
         }
-        if (y >= 10 && y <= 36 && x >= Math.max(10, width - 472) && x <= width - 340) {
+        if (y >= 10 && y <= 36 && x >= 10 && x <= width - 340) {
             cycleTarget();
             return true;
         }
@@ -386,7 +462,7 @@ public final class LedgeMapScreen extends Screen {
             printArmed = true;
             return true;
         }
-        if (event.button() == 1 && onMap(x, y)) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT && onMap(x, y)) {
             contextMenuVisible = true;
             contextMenuX = Math.min((int) x, width - 160);
             contextMenuY = Math.min((int) y, height - 76);
@@ -395,7 +471,7 @@ public final class LedgeMapScreen extends Screen {
             contextWorldZ = mapWorldZ((width - size) / 2, (height - size) / 2, size, (int) x, (int) y);
             return true;
         }
-        if (contextMenuVisible && event.button() == 0) {
+        if (contextMenuVisible && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             int option = (int) ((y - contextMenuY) / 22);
             boolean selected = x >= contextMenuX && x <= contextMenuX + 150
                     && y >= contextMenuY && y <= contextMenuY + 66;
@@ -411,7 +487,7 @@ public final class LedgeMapScreen extends Screen {
             }
             return true;
         }
-        if (event.button() == 0 && x > 20 && x < width - 20 && y > 20 && y < height - 20) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && x > 20 && x < width - 20 && y > 20 && y < height - 20) {
             if (printArmed) {
                 printArmed = false;
                 selectingPrint = true;
@@ -437,16 +513,13 @@ public final class LedgeMapScreen extends Screen {
             dragging = true;
             lastMouseX = x;
             lastMouseY = y;
-            dragX = 0;
-            dragY = 0;
             followPlayer = false;
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        return false;
     }
 
-    @Override
-    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+    private boolean draggedVirtual(MouseButtonEvent event, double deltaX, double deltaY) {
         if (selectingArea) {
             selectionEndX = event.x();
             selectionEndY = event.y();
@@ -476,7 +549,7 @@ public final class LedgeMapScreen extends Screen {
             selectionEndY = event.y();
             return true;
         }
-        if (!dragging) return super.mouseDragged(event, deltaX, deltaY);
+        if (!dragging) return false;
         double screenDeltaX = event.x() - lastMouseX;
         double screenDeltaY = event.y() - lastMouseY;
         if (threeDimensional) {
@@ -488,10 +561,11 @@ public final class LedgeMapScreen extends Screen {
         }
         lastMouseX = event.x();
         lastMouseY = event.y();
-        int mapSize = Math.min(height - 36, width - 300);
+        int mapSize = Math.min(height - 100, width - 300);
         int tileSize = Math.max(96, mapSize) / 3;
-        int shiftX = (int) (dragX / tileSize);
-        int shiftZ = (int) (dragY / tileSize);
+        // Keep the sub-tile remainder as a pixel offset so 2D panning follows the mouse smoothly.
+        int shiftX = (int) Math.floor((dragX + tileSize / 2.0) / tileSize);
+        int shiftZ = (int) Math.floor((dragY + tileSize / 2.0) / tileSize);
         if (shiftX != 0 || shiftZ != 0) {
             centerX -= shiftX;
             centerZ -= shiftZ;
@@ -502,9 +576,8 @@ public final class LedgeMapScreen extends Screen {
         return true;
     }
 
-    @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
-        if (selectingArea && event.button() == 0) {
+    private boolean releasedVirtual(MouseButtonEvent event) {
+        if (selectingArea && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             selectingArea = false;
             int size = mapSize();
             var end = new LocalMapAnnotations.Point(
@@ -532,30 +605,35 @@ public final class LedgeMapScreen extends Screen {
             straightEndpoint = null;
             return true;
         }
-        if (selectingPrint && event.button() == 0) {
+        if (selectingPrint && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             selectionEndX = event.x();
             selectionEndY = event.y();
             selectingPrint = false;
             saveSelectedScreenshot();
             return true;
         }
-        if (dragging && event.button() == 0) {
+        if (dragging && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             dragging = false;
             return true;
         }
-        return super.mouseReleased(event);
+        return false;
     }
 
     private void saveSelectedScreenshot() {
+        // Capture the selection as fractions of the (virtual) screen now; the screenshot callback runs later,
+        // outside the virtual layout, so pixel coordinates would no longer match.
+        double fx0 = Math.min(selectionStartX, selectionEndX) / Math.max(1.0, width);
+        double fy0 = Math.min(selectionStartY, selectionEndY) / Math.max(1.0, height);
+        double fx1 = Math.max(selectionStartX, selectionEndX) / Math.max(1.0, width);
+        double fy1 = Math.max(selectionStartY, selectionEndY) / Math.max(1.0, height);
         Screenshot.takeScreenshot(minecraft.gameRenderer.mainRenderTarget(), image -> {
-            double scaleX = image.getWidth() / (double) Math.max(1, width);
-            double scaleY = image.getHeight() / (double) Math.max(1, height);
-            int left = clamp((int) (Math.min(selectionStartX, selectionEndX) * scaleX), 0, image.getWidth());
-            int top = clamp((int) (Math.min(selectionStartY, selectionEndY) * scaleY), 0, image.getHeight());
-            int right = clamp((int) (Math.max(selectionStartX, selectionEndX) * scaleX), 0, image.getWidth());
-            int bottom = clamp((int) (Math.max(selectionStartY, selectionEndY) * scaleY), 0, image.getHeight());
+            int left = clamp((int) Math.round(fx0 * image.getWidth()), 0, image.getWidth());
+            int top = clamp((int) Math.round(fy0 * image.getHeight()), 0, image.getHeight());
+            int right = clamp((int) Math.round(fx1 * image.getWidth()), 0, image.getWidth());
+            int bottom = clamp((int) Math.round(fy1 * image.getHeight()), 0, image.getHeight());
             if (right - left < 8 || bottom - top < 8) {
                 image.close();
+                if (minecraft.player != null) minecraft.player.sendSystemMessage(Component.literal("[Ledge] 인쇄 영역이 너무 작습니다. 더 크게 드래그하세요."));
                 return;
             }
             NativeImage crop = new NativeImage(right - left, bottom - top, false);
@@ -566,7 +644,7 @@ public final class LedgeMapScreen extends Screen {
             try {
                 Files.createDirectories(directory);
                 crop.writeToFile(directory.resolve(name));
-                if (minecraft.player != null) minecraft.player.sendOverlayMessage(Component.literal("영역 스크린샷 저장: screenshots/" + name));
+                if (minecraft.player != null) minecraft.player.sendSystemMessage(Component.literal("[Ledge] 인쇄 저장: screenshots/" + name));
             } catch (IOException exception) {
                 if (minecraft.player != null) minecraft.player.sendOverlayMessage(Component.literal("스크린샷 저장 실패: " + exception.getMessage()));
             } finally {
@@ -581,41 +659,89 @@ public final class LedgeMapScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double x, double y, double horizontalAmount, double verticalAmount) {
-        changeZoom(verticalAmount > 0 ? 1 : -1);
+        // Trackpads send many small scroll events; collect them and change one level per notch-sized step.
+        long now = System.currentTimeMillis();
+        if (now - lastScrollMillis > 400) scrollAccumulator = 0;
+        lastScrollMillis = now;
+        scrollAccumulator += verticalAmount;
+        if (Math.abs(scrollAccumulator) >= SCROLL_STEP && now - lastZoomMillis >= 150) {
+            changeZoom(scrollAccumulator > 0 ? 1 : -1);
+            scrollAccumulator = 0;
+            lastZoomMillis = now;
+        }
         return true;
     }
+
+    private static final double SCROLL_STEP = 2.5;
+    /** Keypad minus in 26.3's key code table (no named InputConstants field). */
+    private static final int KEYPAD_MINUS = 86;
+    private double scrollAccumulator;
+    private long lastScrollMillis;
+    private long lastZoomMillis;
 
     private void changeZoom(int amount) {
         int nextZoom = Math.max(0, Math.min(12, zoom + amount));
         if (nextZoom != zoom) {
             zoom = nextZoom;
             followPlayer = true;
+            dragX = 0;
+            dragY = 0;
             requestVisibleTiles();
         }
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        if (!annotationDialog) return super.keyPressed(event);
-        if (event.key() == 257) {
-            saveAnnotation();
+        int key = event.key();
+        boolean escape = key == InputConstants.KEY_ESCAPE;
+        if (annotationDialog) {
+            if (key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER) {
+                saveAnnotation();
+                return true;
+            }
+            if (escape) {
+                annotationDialog = false;
+                dialogAreaPoints = List.of();
+                return true;
+            }
+            if (key == InputConstants.KEY_TAB) {
+                colorFieldActive = !colorFieldActive;
+                return true;
+            }
+            if (key == InputConstants.KEY_BACKSPACE) {
+                if (colorFieldActive && !dialogColor.isEmpty()) dialogColor = dialogColor.substring(0, dialogColor.length() - 1);
+                else if (!colorFieldActive && !dialogName.isEmpty()) dialogName = dialogName.substring(0, dialogName.length() - 1);
+                return true;
+            }
+            // Let printable keys reach charTyped.
+            return false;
+        }
+        boolean shortcut = event.hasControlDown() || event.hasControlDownWithQuirk();
+        if (shortcut && (key == InputConstants.KEY_EQUALS || key == InputConstants.KEY_ADD)) {
+            changeZoom(1);
             return true;
         }
-        if (event.key() == 256) {
-            annotationDialog = false;
-            dialogAreaPoints = List.of();
+        if (shortcut && (key == InputConstants.KEY_MINUS || key == KEYPAD_MINUS)) {
+            changeZoom(-1);
             return true;
         }
-        if (event.key() == 258) {
-            colorFieldActive = !colorFieldActive;
+        if (escape && contextMenuVisible) {
+            contextMenuVisible = false;
             return true;
         }
-        if (event.key() == 259) {
-            if (colorFieldActive && !dialogColor.isEmpty()) dialogColor = dialogColor.substring(0, dialogColor.length() - 1);
-            else if (!colorFieldActive && !dialogName.isEmpty()) dialogName = dialogName.substring(0, dialogName.length() - 1);
+        if (escape && (printArmed || selectingPrint)) {
+            printArmed = false;
+            selectingPrint = false;
             return true;
         }
-        return true;
+        if (escape && (awaitingArea || selectingArea)) {
+            awaitingArea = false;
+            selectingArea = false;
+            areaPoints.clear();
+            straightEndpoint = null;
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
@@ -661,7 +787,7 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private int mapSize() {
-        return Math.max(96, Math.min(height - 36, width - 300));
+        return Math.max(96, Math.min(height - 100, width - 300));
     }
 
     private boolean onMap(double x, double y) {
@@ -675,12 +801,12 @@ public final class LedgeMapScreen extends Screen {
 
     private int mapWorldX(int left, int top, int size, int x, int y) {
         MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
-        return (centerX - 1) * tileBlocks() + (int) ((mapPosition.x() - left) * tileBlocks() * 3.0 / size);
+        return (centerX - 1) * tileBlocks() + (int) Math.floor((mapPosition.x() - left - panOffsetX()) * tileBlocks() * 3.0 / size);
     }
 
     private int mapWorldZ(int left, int top, int size, int x, int y) {
         MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
-        return (centerZ - 1) * tileBlocks() + (int) ((mapPosition.y() - top) * tileBlocks() * 3.0 / size);
+        return (centerZ - 1) * tileBlocks() + (int) Math.floor((mapPosition.y() - top - panOffsetZ()) * tileBlocks() * 3.0 / size);
     }
 
     private MapPosition unprojectMapPosition(double screenX, double screenY, int left, int top, int size) {
@@ -692,6 +818,7 @@ public final class LedgeMapScreen extends Screen {
         return new MapPosition(centerX + dx + 2.0 * dy, centerY - dx + 2.0 * dy);
     }
 
+    // outline(x, y, width, height, color) takes a size; fill(x0, y0, x1, y1, color) takes corners.
     private void pushMapTransform(GuiGraphicsExtractor graphics, int top, int size) {
         graphics.pose().pushMatrix();
         if (!threeDimensional) return;
@@ -703,12 +830,16 @@ public final class LedgeMapScreen extends Screen {
         graphics.pose().translate(-centerX, -centerY);
     }
 
+    private int panOffsetX() { return threeDimensional ? 0 : (int) Math.round(dragX); }
+
+    private int panOffsetZ() { return threeDimensional ? 0 : (int) Math.round(dragY); }
+
     private int mapX(int left, int size, int worldX) {
-        return left + (int) ((worldX - (centerX - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
+        return left + panOffsetX() + (int) ((worldX - (centerX - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
     }
 
     private int mapZ(int top, int size, int worldZ) {
-        return top + (int) ((worldZ - (centerZ - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
+        return top + panOffsetZ() + (int) ((worldZ - (centerZ - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
     }
 
     private void appendAreaPoint(LocalMapAnnotations.Point point) {
