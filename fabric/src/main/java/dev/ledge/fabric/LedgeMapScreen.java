@@ -365,6 +365,11 @@ public final class LedgeMapScreen extends Screen {
                 : selectingArea ? "자유 선택 · Shift: 직선 구간 · 놓으면 완료" :
                 "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
         graphics.centeredText(font, hint, width / 2, height - 18, 0xffb8c2ca);
+        if (statusMessage != null && System.currentTimeMillis() < statusUntil) {
+            int textWidth = font.width(statusMessage);
+            graphics.fill(width / 2 - textWidth / 2 - 6, height - 40, width / 2 + textWidth / 2 + 6, height - 26, 0xe0000000);
+            graphics.centeredText(font, statusMessage, width / 2, height - 37, 0xffffe08a);
+        }
         if (selectingPrint) {
             int sx = (int) Math.min(selectionStartX, selectionEndX);
             int sy = (int) Math.min(selectionStartY, selectionEndY);
@@ -599,7 +604,7 @@ public final class LedgeMapScreen extends Screen {
                 dialogMaxZ = areaPoints.stream().mapToInt(LocalMapAnnotations.Point::z).max().orElse(0);
                 openAnnotationDialog();
             } else if (minecraft.player != null) {
-                minecraft.player.sendOverlayMessage(Component.literal("영역을 만들려면 넓이가 있는 점 세 개 이상이 필요합니다."));
+                showStatus("영역을 만들려면 넓이가 있는 점 세 개 이상이 필요합니다.");
             }
             areaPoints.clear();
             straightEndpoint = null;
@@ -633,7 +638,7 @@ public final class LedgeMapScreen extends Screen {
             int bottom = clamp((int) Math.round(fy1 * image.getHeight()), 0, image.getHeight());
             if (right - left < 8 || bottom - top < 8) {
                 image.close();
-                if (minecraft.player != null) minecraft.player.sendSystemMessage(Component.literal("[Ledge] 인쇄 영역이 너무 작습니다. 더 크게 드래그하세요."));
+                showStatus("[Ledge] 인쇄 영역이 너무 작습니다. 더 크게 드래그하세요.");
                 return;
             }
             NativeImage crop = new NativeImage(right - left, bottom - top, false);
@@ -644,13 +649,22 @@ public final class LedgeMapScreen extends Screen {
             try {
                 Files.createDirectories(directory);
                 crop.writeToFile(directory.resolve(name));
-                if (minecraft.player != null) minecraft.player.sendSystemMessage(Component.literal("[Ledge] 인쇄 저장: screenshots/" + name));
+                showStatus("[Ledge] 인쇄 저장: screenshots/" + name);
             } catch (IOException exception) {
-                if (minecraft.player != null) minecraft.player.sendOverlayMessage(Component.literal("스크린샷 저장 실패: " + exception.getMessage()));
+                showStatus("스크린샷 저장 실패: " + exception.getMessage());
             } finally {
                 crop.close();
             }
         });
+    }
+
+    private String statusMessage;
+    private long statusUntil;
+
+    /** Shows a short message inside the map screen (HUD overlay messages are hidden while it is open). */
+    private void showStatus(String message) {
+        statusMessage = message;
+        statusUntil = System.currentTimeMillis() + 4000;
     }
 
     private static int clamp(int value, int min, int max) {
@@ -766,7 +780,7 @@ public final class LedgeMapScreen extends Screen {
     private void saveAnnotation() {
         String name = dialogName.trim();
         if (name.isEmpty() || !dialogColor.matches("#[0-9a-fA-F]{6}")) {
-            if (minecraft.player != null) minecraft.player.sendOverlayMessage(Component.literal("이름과 #RRGGBB 색상을 확인해 주세요."));
+            showStatus("이름과 #RRGGBB 색상을 확인해 주세요.");
             return;
         }
         String color = dialogColor.toUpperCase(java.util.Locale.ROOT);
