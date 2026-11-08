@@ -31,8 +31,14 @@ public final class MapTileProjector {
         int minHeight = Short.MAX_VALUE;
         int maxHeight = Short.MIN_VALUE;
         for (MapBlockSample sample : borderSamples) {
+            // Unloaded samples are transparent and carry the world floor height; they must not stretch the image.
+            if ((sample.mapColorArgb() >>> 24) == 0) continue;
             minHeight = Math.min(minHeight, sample.height());
             maxHeight = Math.max(maxHeight, sample.height());
+        }
+        if (minHeight > maxHeight) {
+            minHeight = HEIGHT_REFERENCE;
+            maxHeight = HEIGHT_REFERENCE;
         }
         int topOffset = Math.max(0, (int) Math.ceil((maxHeight - HEIGHT_REFERENCE) * verticalScale));
         int bottomOffset = Math.max(0, (int) Math.ceil((HEIGHT_REFERENCE - minHeight) * verticalScale));
@@ -58,12 +64,14 @@ public final class MapTileProjector {
                     int[] d = point(u, v + step, height, maxHeight, topOffset, verticalScale);
                     if (x + 1 < samples) {
                         int east = heightAt(heights, step, x + 1, z);
+                        if ((source[(z * step + step / 2) * MapTileKey.TILE_SIZE + (x + 1) * step + step / 2] >>> 24) == 0) east = height;
                         if (height != east) fill(graphics,
                                 b, c,
                                 point(u + step, v + step, east, maxHeight, topOffset, verticalScale),
                                 point(u + step, v, east, maxHeight, topOffset, verticalScale), shade(color, 0.58));
                     } else {
-                        int east = borderSamples[(z + 1) * borderSide + samples + 1].height();
+                        MapBlockSample eastSample = borderSamples[(z + 1) * borderSide + samples + 1];
+                        int east = (eastSample.mapColorArgb() >>> 24) == 0 ? height : eastSample.height();
                         if (height != east) fill(graphics,
                                 b, c,
                                 point(u + step, v + step, east, maxHeight, topOffset, verticalScale),
@@ -71,12 +79,14 @@ public final class MapTileProjector {
                     }
                     if (z + 1 < samples) {
                         int south = heightAt(heights, step, x, z + 1);
+                        if ((source[((z + 1) * step + step / 2) * MapTileKey.TILE_SIZE + x * step + step / 2] >>> 24) == 0) south = height;
                         if (height != south) fill(graphics,
                                 d, c,
                                 point(u + step, v + step, south, maxHeight, topOffset, verticalScale),
                                 point(u, v + step, south, maxHeight, topOffset, verticalScale), shade(color, 0.42));
                     } else {
-                        int south = borderSamples[(samples + 1) * borderSide + x + 1].height();
+                        MapBlockSample southSample = borderSamples[(samples + 1) * borderSide + x + 1];
+                        int south = (southSample.mapColorArgb() >>> 24) == 0 ? height : southSample.height();
                         if (height != south) fill(graphics,
                                 d, c,
                                 point(u + step, v + step, south, maxHeight, topOffset, verticalScale),
