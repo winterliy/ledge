@@ -339,7 +339,11 @@ public final class LedgeMapScreen extends Screen {
         int targetButtonLeft = 10;
         int targetButtonRight = width - 384;
         graphics.fill(width - 378, 10, width - 340, 36, 0xd9000000);
-        graphics.centeredText(font, "갱신", width - 359, 18, 0xffffffff);
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(width - 359, 23);
+        graphics.pose().scale(2.0f, 2.0f);
+        graphics.centeredText(font, "↻", 0, -4, 0xffffffff);
+        graphics.pose().popMatrix();
         graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0xd9000000);
         String shownTarget = targetLabel.isEmpty() ? "차원 선택" : targetLabel;
         int targetCharacters = Math.max(1, (targetButtonRight - targetButtonLeft - 12) / 6);
@@ -656,20 +660,25 @@ public final class LedgeMapScreen extends Screen {
         int size = mapSize();
         int left = (width - size) / 2;
         int top = (height - size) / 2;
-        int sx0 = (int) Math.max(left, Math.min(selectionStartX, selectionEndX));
-        int sy0 = (int) Math.max(top, Math.min(selectionStartY, selectionEndY));
-        int sx1 = (int) Math.min(left + size, Math.max(selectionStartX, selectionEndX));
-        int sy1 = (int) Math.min(top + size, Math.max(selectionStartY, selectionEndY));
+        int sx0 = (int) Math.min(selectionStartX, selectionEndX);
+        int sy0 = (int) Math.min(selectionStartY, selectionEndY);
+        int sx1 = (int) Math.max(selectionStartX, selectionEndX);
+        int sy1 = (int) Math.max(selectionStartY, selectionEndY);
         if (sx1 - sx0 < 4 || sy1 - sy0 < 4) {
-            showStatus("인쇄 영역이 너무 작거나 지도 밖입니다. 지도 위를 더 크게 드래그하세요.");
+            showStatus("인쇄 영역이 너무 작습니다. 더 크게 드래그하세요.");
             return;
         }
         boolean wasThreeDimensional = threeDimensional;
         threeDimensional = false;
+        // World range of the selection (may extend past the map frame) and of the visible map frame.
         int worldX0 = mapWorldX(left, top, size, sx0, sy0);
         int worldZ0 = mapWorldZ(left, top, size, sx0, sy0);
         int worldX1 = mapWorldX(left, top, size, sx1, sy1);
         int worldZ1 = mapWorldZ(left, top, size, sx1, sy1);
+        int frameX0 = mapWorldX(left, top, size, left, top);
+        int frameZ0 = mapWorldZ(left, top, size, left, top);
+        int frameX1 = mapWorldX(left, top, size, left + size, top + size);
+        int frameZ1 = mapWorldZ(left, top, size, left + size, top + size);
         threeDimensional = wasThreeDimensional;
         int blocks = tileBlocks();
         double pixelsPerBlock = 256.0 / blocks;
@@ -679,26 +688,32 @@ public final class LedgeMapScreen extends Screen {
             showStatus("인쇄할 수 없는 크기입니다.");
             return;
         }
-        int missing = 0;
-        try (NativeImage out = new NativeImage(outWidth + PRINT_MARGIN * 2, outHeight + PRINT_MARGIN * 2, true)) {
-            // NativeImage stores ABGR; the background is opaque, so fill margins and missing tiles with it.
-            int background = 0xff000000 | ((MAP_BACKGROUND & 0xff) << 16) | (MAP_BACKGROUND & 0xff00) | ((MAP_BACKGROUND >> 16) & 0xff);
-            out.fillRect(0, 0, out.getWidth(), out.getHeight(), background);
-            for (int tileX = Math.floorDiv(worldX0, blocks); tileX <= Math.floorDiv(worldX1 - 1, blocks); tileX++) {
-                for (int tileZ = Math.floorDiv(worldZ0, blocks); tileZ <= Math.floorDiv(worldZ1 - 1, blocks); tileZ++) {
-                    byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, zoom);
-                    if (png == null) { missing++; continue; }
-                    try (NativeImage tile = NativeImage.read(png)) {
-                        int tileOriginX = (int) Math.round((tileX * (long) blocks - worldX0) * pixelsPerBlock);
-                        int tileOriginZ = (int) Math.round((tileZ * (long) blocks - worldZ0) * pixelsPerBlock);
-                        for (int py = 0; py < tile.getHeight(); py++) {
-                            int oy = tileOriginZ + py;
-                            if (oy < 0 || oy >= outHeight) continue;
-                            for (int px = 0; px < tile.getWidth(); px++) {
-                                int ox = tileOriginX + px;
-                                if (ox < 0 || ox >= outWidth) continue;
-                                int pixel = tile.getPixel(px, py);
-                                if ((pixel >>> 24) != 0) out.setPixel(ox + PRINT_MARGIN, oy + PRINT_MARGIN, pixel);
+        int mapX0 = Math.max(worldX0, frameX0);
+        int mapZ0 = Math.max(worldZ0, frameZ0);
+        int mapX1 = Math.min(worldX1, frameX1);
+        int mapZ1 = Math.min(worldZ1, frameZ1);
+        try (NativeImage out = new NativeImage(outWidth, outHeight, true)) {
+            // The selection starts as map-screen background (NativeImage pixels are ARGB in 26.3), then map pixels go on top.
+            out.fillRect(0, 0, outWidth, outHeight, MAP_BACKGROUND);
+            if (mapX1 > mapX0 && mapZ1 > mapZ0) {
+                for (int tileX = Math.floorDiv(mapX0, blocks); tileX <= Math.floorDiv(mapX1 - 1, blocks); tileX++) {
+                    for (int tileZ = Math.floorDiv(mapZ0, blocks); tileZ <= Math.floorDiv(mapZ1 - 1, blocks); tileZ++) {
+                        byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, zoom);
+                        if (png == null) continue;
+                        try (NativeImage tile = NativeImage.read(png)) {
+                            for (int py = 0; py < tile.getHeight(); py++) {
+                                double worldZ = tileZ * (double) blocks + py / pixelsPerBlock;
+                                if (worldZ < mapZ0 || worldZ >= mapZ1) continue;
+                                int oy = (int) Math.round((worldZ - worldZ0) * pixelsPerBlock);
+                                if (oy < 0 || oy >= outHeight) continue;
+                                for (int px = 0; px < tile.getWidth(); px++) {
+                                    double worldX = tileX * (double) blocks + px / pixelsPerBlock;
+                                    if (worldX < mapX0 || worldX >= mapX1) continue;
+                                    int ox = (int) Math.round((worldX - worldX0) * pixelsPerBlock);
+                                    if (ox < 0 || ox >= outWidth) continue;
+                                    int pixel = tile.getPixel(px, py);
+                                    if ((pixel >>> 24) != 0) out.setPixel(ox, oy, pixel);
+                                }
                             }
                         }
                     }
@@ -708,7 +723,7 @@ public final class LedgeMapScreen extends Screen {
             String name = "ledge-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".png";
             Files.createDirectories(directory);
             out.writeToFile(directory.resolve(name));
-            showStatus("인쇄 저장: screenshots/" + name + (missing > 0 ? " (불러오지 않은 타일 " + missing + "개는 비어 있음)" : ""));
+            showStatus("인쇄 저장: screenshots/" + name);
         } catch (IOException exception) {
             showStatus("인쇄 저장 실패: " + exception.getMessage());
         }
@@ -716,7 +731,6 @@ public final class LedgeMapScreen extends Screen {
 
     private static final int COORDINATE_PANEL_RIGHT = 250;
     private static final int COORDINATE_COLLAPSED_RIGHT = 60;
-    private static final int PRINT_MARGIN = 16;
     private static final int MAP_BACKGROUND = 0xff10151a;
     private String statusMessage;
     private long statusUntil;
