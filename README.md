@@ -126,3 +126,7 @@ Artifacts are written under `common/build/libs/`, `glap1/build/libs/`, and `fabr
 - Xaero World Map interaction reference: https://modrinth.com/mod/xaeros-world-map (ARR)
 
 Ledge's built-in pre-generator follows Chunky's task model (GPL-3.0-only); Chunky itself is not required or bundled. Xaero code is not redistributed. Check each upstream license before incorporating or distributing upstream implementation code.
+
+## License
+
+GPL-3.0-only. See `LICENSE`. The built-in pre-generator follows the task model of Chunky (GPL-3.0), so Ledge is distributed under the same license. Dynmap (Apache-2.0) was used only as a behavior reference; Xaero code is not included.
