@@ -1,5 +1,4 @@
 name: Ledge
-folia-supported: true
 version: '${version}'
 main: dev.ledge.glap1.LedgeGlap1Plugin
 api-version: '26.3'
