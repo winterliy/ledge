@@ -714,7 +714,7 @@ public final class LedgeMapScreen extends Screen {
                 return true;
             }
             if (escape) {
-                annotationDialog = false;
+                closeAnnotationDialog();
                 dialogAreaPoints = List.of();
                 return true;
             }
@@ -775,7 +775,16 @@ public final class LedgeMapScreen extends Screen {
         colorFieldActive = false;
         dialogName = dialogIsArea ? "영역" : "포인트";
         dialogColor = dialogIsArea ? "#4A90E2" : "#F44336";
+        // 26.3 only delivers typed characters (and IME text) while text input is enabled.
+        minecraft.onTextInputFocusChange(this, true);
     }
+
+    private void closeAnnotationDialog() {
+        annotationDialog = false;
+        minecraft.onTextInputFocusChange(this, false);
+    }
+
+
 
     private void saveAnnotation() {
         String name = dialogName.trim();
@@ -791,7 +800,7 @@ public final class LedgeMapScreen extends Screen {
         } else {
             LocalMapAnnotations.addMarker(new LocalMapAnnotations.Marker(dialogX, dialogZ, name, color));
         }
-        annotationDialog = false;
+        closeAnnotationDialog();
     }
 
     private void loadAnnotations(String targetDimension) {
@@ -930,6 +939,7 @@ public final class LedgeMapScreen extends Screen {
 
     @Override
     public void removed() {
+        if (annotationDialog) closeAnnotationDialog();
         LedgeFabricClient.unsubscribeTiles();
     }
 }
