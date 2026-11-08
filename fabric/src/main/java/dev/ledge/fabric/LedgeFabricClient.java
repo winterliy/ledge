@@ -78,6 +78,16 @@ public final class LedgeFabricClient implements ClientModInitializer {
         }
     }
 
+    /** Drops every cached tile so the next request downloads fresh images. */
+    static void forgetTiles() {
+        for (Identifier id : TEXTURES.values()) Minecraft.getInstance().getTextureManager().release(id);
+        for (ProjectedTexture texture : PROJECTED_TEXTURES.values()) Minecraft.getInstance().getTextureManager().release(texture.texture());
+        TEXTURES.clear();
+        PROJECTED_TEXTURES.clear();
+        TILE_PNGS.clear();
+        REQUESTED_TILES.clear();
+    }
+
     static void unsubscribeTiles() {
         if (ClientPlayNetworking.canSend(MapPayload.TYPE)) ClientPlayNetworking.send(new MapPayload(new byte[]{3}));
         REQUESTED_TILES.clear();

@@ -324,9 +324,10 @@ public final class LedgeMapScreen extends Screen {
         }
         if (!projectedSurface) graphics.disableScissor();
         graphics.pose().popMatrix();
-        graphics.fill(10, 44, 190, coordinatesVisible ? 126 : 76, 0xd9000000);
-        graphics.text(font, "좌표", 20, 52, 0xffffffff);
-        graphics.text(font, coordinatesVisible ? "×" : "+", 172, 52, 0xffffffff);
+        if (!coordinatesVisible) {
+            graphics.fill(10, height - 30, COORDINATE_COLLAPSED_RIGHT, height - 12, 0xd9000000);
+            graphics.text(font, "좌표 +", 16, height - 25, 0xffffffff);
+        }
         graphics.fill(width - 196, 10, width - 112, 36, 0xd9000000);
         graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", width - 190, 18, 0xffffffff);
         graphics.fill(width - 286, 10, width - 258, 36, 0xd9000000);
@@ -336,7 +337,9 @@ public final class LedgeMapScreen extends Screen {
         graphics.fill(width - 334, 10, width - 290, 36, 0xd9000000);
         graphics.centeredText(font, threeDimensional ? "3D" : "2D", width - 312, 18, 0xffffffff);
         int targetButtonLeft = 10;
-        int targetButtonRight = width - 340;
+        int targetButtonRight = width - 384;
+        graphics.fill(width - 378, 10, width - 340, 36, 0xd9000000);
+        graphics.centeredText(font, "갱신", width - 359, 18, 0xffffffff);
         graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0xd9000000);
         String shownTarget = targetLabel.isEmpty() ? "차원 선택" : targetLabel;
         int targetCharacters = Math.max(1, (targetButtonRight - targetButtonLeft - 12) / 6);
@@ -359,9 +362,9 @@ public final class LedgeMapScreen extends Screen {
                 worldX = pos.getX();
                 worldZ = pos.getZ();
             }
-            graphics.text(font, "X " + worldX, 20, 72, 0xffdce5eb);
-            graphics.text(font, "Y " + pos.getY(), 20, 86, 0xffdce5eb);
-            graphics.text(font, "Z " + worldZ, 20, 100, 0xffdce5eb);
+            graphics.fill(10, height - 30, COORDINATE_PANEL_RIGHT, height - 12, 0xd9000000);
+            graphics.text(font, "좌표  X " + worldX + "  Y " + pos.getY() + "  Z " + worldZ, 16, height - 25, 0xffdce5eb);
+            graphics.text(font, "×", COORDINATE_PANEL_RIGHT - 12, height - 25, 0xffffffff);
         }
         String hint = printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
                 : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
@@ -441,11 +444,11 @@ public final class LedgeMapScreen extends Screen {
                 return true;
             }
         }
-        if (coordinatesVisible && x >= 160 && x <= 188 && y >= 44 && y <= 70) {
+        if (coordinatesVisible && x >= COORDINATE_PANEL_RIGHT - 18 && x <= COORDINATE_PANEL_RIGHT && y >= height - 30 && y <= height - 12) {
             coordinatesVisible = false;
             return true;
         }
-        if (!coordinatesVisible && x >= 10 && x <= 190 && y >= 44 && y <= 76) {
+        if (!coordinatesVisible && x >= 10 && x <= COORDINATE_COLLAPSED_RIGHT && y >= height - 30 && y <= height - 12) {
             coordinatesVisible = true;
             return true;
         }
@@ -465,7 +468,13 @@ public final class LedgeMapScreen extends Screen {
             threeDimensional = !threeDimensional;
             return true;
         }
-        if (y >= 10 && y <= 36 && x >= 10 && x <= width - 340) {
+        if (y >= 10 && y <= 36 && x >= width - 378 && x <= width - 340) {
+            LedgeFabricClient.forgetTiles();
+            requestCurrentTiles();
+            showStatus("지도 타일을 다시 불러옵니다.");
+            return true;
+        }
+        if (y >= 10 && y <= 36 && x >= 10 && x <= width - 384) {
             cycleTarget();
             return true;
         }
@@ -671,7 +680,10 @@ public final class LedgeMapScreen extends Screen {
             return;
         }
         int missing = 0;
-        try (NativeImage out = new NativeImage(outWidth, outHeight, true)) {
+        try (NativeImage out = new NativeImage(outWidth + PRINT_MARGIN * 2, outHeight + PRINT_MARGIN * 2, true)) {
+            // NativeImage stores ABGR; the background is opaque, so fill margins and missing tiles with it.
+            int background = 0xff000000 | ((MAP_BACKGROUND & 0xff) << 16) | (MAP_BACKGROUND & 0xff00) | ((MAP_BACKGROUND >> 16) & 0xff);
+            out.fillRect(0, 0, out.getWidth(), out.getHeight(), background);
             for (int tileX = Math.floorDiv(worldX0, blocks); tileX <= Math.floorDiv(worldX1 - 1, blocks); tileX++) {
                 for (int tileZ = Math.floorDiv(worldZ0, blocks); tileZ <= Math.floorDiv(worldZ1 - 1, blocks); tileZ++) {
                     byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, zoom);
@@ -685,7 +697,8 @@ public final class LedgeMapScreen extends Screen {
                             for (int px = 0; px < tile.getWidth(); px++) {
                                 int ox = tileOriginX + px;
                                 if (ox < 0 || ox >= outWidth) continue;
-                                out.setPixel(ox, oy, tile.getPixel(px, py));
+                                int pixel = tile.getPixel(px, py);
+                                if ((pixel >>> 24) != 0) out.setPixel(ox + PRINT_MARGIN, oy + PRINT_MARGIN, pixel);
                             }
                         }
                     }
@@ -701,6 +714,10 @@ public final class LedgeMapScreen extends Screen {
         }
     }
 
+    private static final int COORDINATE_PANEL_RIGHT = 250;
+    private static final int COORDINATE_COLLAPSED_RIGHT = 60;
+    private static final int PRINT_MARGIN = 16;
+    private static final int MAP_BACKGROUND = 0xff10151a;
     private String statusMessage;
     private long statusUntil;
 
