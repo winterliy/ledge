@@ -13,7 +13,7 @@ public final class LedgeGlap1Plugin extends JavaPlugin {
     private LedgeFabricBridge fabricBridge;
 
     private BuiltInPregenerator builtInPregenerator;
-    private io.papermc.paper.threadedregions.scheduler.ScheduledTask engineTask;
+    private TaskHandle engineTask;
 
     @Override
     public void onEnable() {

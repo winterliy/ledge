@@ -5,7 +5,6 @@ import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,7 +27,7 @@ final class BuiltInPregenerator implements Pregenerator {
     private final MapTileEngine tiles;
     private final File stateFile;
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
-    private final ScheduledTask saver;
+    private final TaskHandle saver;
 
     BuiltInPregenerator(JavaPlugin plugin, MapTileEngine tiles) {
         this.plugin = plugin;
@@ -150,7 +149,7 @@ final class BuiltInPregenerator implements Pregenerator {
         private final long total;
         private final AtomicInteger inFlight = new AtomicInteger();
         private final AtomicLong done;
-        private ScheduledTask handle;
+        private TaskHandle handle;
         private int ring;
         private int step;
         /** Position up to which every issued chunk has finished; resuming restarts here. */

@@ -1,36 +1,36 @@
 package dev.ledge.glap1;
 
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.plugin.Plugin;
-
-import java.util.concurrent.TimeUnit;
+import org.bukkit.scheduler.BukkitTask;
 
 /**
- * Region-aware scheduling that works unchanged on Paper and Folia. On Paper the global and region schedulers run
- * on the main thread; on Folia they run on the global/region threads that own the data.
+ * Scheduling on servers older than Paper 1.20 (no global/region/async schedulers): everything maps onto the Bukkit
+ * scheduler, whose "global" and "region" work runs on the single main thread.
  */
 final class Schedulers {
     private Schedulers() { }
 
     static void global(Plugin plugin, Runnable task) {
-        Bukkit.getGlobalRegionScheduler().execute(plugin, task);
+        Bukkit.getScheduler().runTask(plugin, task);
     }
 
-    static ScheduledTask globalTimer(Plugin plugin, Runnable task, long delayTicks, long periodTicks) {
-        return Bukkit.getGlobalRegionScheduler().runAtFixedRate(plugin, ignored -> task.run(), Math.max(1, delayTicks), periodTicks);
+    static TaskHandle globalTimer(Plugin plugin, Runnable task, long delayTicks, long periodTicks) {
+        BukkitTask handle = Bukkit.getScheduler().runTaskTimer(plugin, task, Math.max(1, delayTicks), periodTicks);
+        return handle::cancel;
     }
 
     static void region(Plugin plugin, World world, int chunkX, int chunkZ, Runnable task) {
-        Bukkit.getRegionScheduler().execute(plugin, world, chunkX, chunkZ, task);
+        Bukkit.getScheduler().runTask(plugin, task);
     }
 
-    static ScheduledTask asyncTimer(Plugin plugin, Runnable task, long delayMillis, long periodMillis) {
-        return Bukkit.getAsyncScheduler().runAtFixedRate(plugin, ignored -> task.run(), delayMillis, periodMillis, TimeUnit.MILLISECONDS);
+    static TaskHandle asyncTimer(Plugin plugin, Runnable task, long delayMillis, long periodMillis) {
+        BukkitTask handle = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, task, Math.max(1L, delayMillis / 50L), Math.max(1L, periodMillis / 50L));
+        return handle::cancel;
     }
 
-    /** Average tick time in ms, or 0 when the server cannot report it (e.g. Folia's regionized ticking). */
+    /** Average tick time in ms, or 0 when the server cannot report it. */
     static double averageTickMillis() {
         try {
             return Bukkit.getServer().getAverageTickTime();
