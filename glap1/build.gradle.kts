@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(project(":common"))
-    compileOnly("io.papermc.paper:paper-api:26.3.build.218-stable")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.135-stable")
 }
 
 tasks.jar {

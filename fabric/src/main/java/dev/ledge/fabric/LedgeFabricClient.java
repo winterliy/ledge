@@ -31,7 +31,7 @@ public final class LedgeFabricClient implements ClientModInitializer {
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
             Identifier.fromNamespaceAndPath("ledge", "controls"));
     private static final KeyMapping OPEN_MAP = KeyMappingHelper.registerKeyMapping(
-            new KeyMapping("key.ledge.open_map", InputConstants.Type.KEYBOARD, InputConstants.KEY_Z, CATEGORY));
+            new KeyMapping("key.ledge.open_map", InputConstants.Type.KEYSYM, InputConstants.KEY_Z, CATEGORY));
     private static final LinkedHashMap<Integer, Transfer> TRANSFERS = new LinkedHashMap<>();
     private static final LinkedHashMap<String, Identifier> TEXTURES = new LinkedHashMap<>(16, 0.75f, true);
     private static final LinkedHashMap<String, ProjectedTexture> PROJECTED_TEXTURES = new LinkedHashMap<>(16, 0.75f, true);
