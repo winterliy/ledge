@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(project(":common"))
-    compileOnly("io.papermc.paper:paper-api:26.1.2.build.74-stable")
+    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
 }
 
 tasks.jar {
@@ -19,7 +19,7 @@ tasks.jar {
 }
 
 java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
+    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 
 tasks.processResources {
