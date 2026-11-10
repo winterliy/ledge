@@ -9,6 +9,10 @@ dependencies {
     mappings(loom.officialMojangMappings())
     modImplementation("net.fabricmc:fabric-loader:${property("loader_version")}")
     modImplementation("net.fabricmc.fabric-api:fabric-api:${property("fabric_api_version")}")
+    // Ship the Fabric API modules this mod uses inside the jar (jar-in-jar): players only need Fabric Loader.
+    for (module in listOf("fabric-api-base", "fabric-key-binding-api-v1", "fabric-lifecycle-events-v1", "fabric-networking-api-v1")) {
+        include(fabricApi.module(module, property("fabric_api_version").toString()))
+    }
 }
 
 java {
