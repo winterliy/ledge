@@ -209,7 +209,8 @@ final class BuiltInPregenerator implements Pregenerator {
                 inFlight.incrementAndGet();
                 int chunkX = chunk[0];
                 int chunkZ = chunk[1];
-                bukkitWorld.getChunkAtAsync(chunkX, chunkZ, true).whenComplete((loaded, failure) -> {
+                // Paper 1.12 offers the callback form only (it generates missing chunks).
+                bukkitWorld.getChunkAtAsync(chunkX, chunkZ, loaded -> {
                     inFlight.decrementAndGet();
                     done.incrementAndGet();
                     tiles.invalidate(bukkitWorld, (chunkX << 4) + 8, (chunkZ << 4) + 8);

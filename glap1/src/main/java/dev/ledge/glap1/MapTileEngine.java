@@ -332,6 +332,12 @@ final class MapTileEngine implements Runnable {
 
     private static Material material(String name) {
         if (name == null) return Material.AIR;
+        if (name.startsWith("legacy:")) {
+            // 1.12 region files store numeric block ids (see LegacyChunk).
+            int end = name.indexOf(':', 7);
+            @SuppressWarnings("deprecation") Material legacy = Material.getMaterial(Integer.parseInt(name.substring(7, end < 0 ? name.length() : end)));
+            return legacy == null ? Material.STONE : legacy;
+        }
         Material material = Material.matchMaterial(name);
         return material == null ? Material.STONE : material;
     }
@@ -505,16 +511,16 @@ final class MapTileEngine implements Runnable {
         if (!vegetation) return base;
         if (biome.contains("SWAMP")) return tint(base, 0xff7a743c);
         if (biome.contains("MANGROVE")) return tint(base, 0xff58964e);
-        if (biome.contains("BADLANDS") || biome.contains("SAVANNA") || biome.contains("DESERT")) {
+        if (biome.contains("BADLANDS") || biome.contains("MESA") || biome.contains("SAVANNA") || biome.contains("DESERT")) {
             return tint(base, 0xffc2a94d);
         }
-        if (biome.contains("SNOW") || biome.contains("FROZEN") || biome.contains("GROVE")) {
+        if (biome.contains("SNOW") || biome.contains("FROZEN") || biome.contains("GROVE") || biome.contains("ICE_") || biome.contains("COLD")) {
             return tint(base, 0xffa8c8ce);
         }
         if (biome.contains("JUNGLE") || biome.contains("BAMBOO")) return tint(base, 0xff63c45d);
         if (biome.contains("TAIGA") || biome.contains("OLD_GROWTH_PINE")) return tint(base, 0xff6d9376);
         if (biome.contains("CHERRY")) return tint(base, 0xffad9fbe);
-        if (biome.contains("DARK_FOREST")) return tint(base, 0xff6e9272);
+        if (biome.contains("DARK_FOREST") || biome.contains("ROOFED")) return tint(base, 0xff6e9272);
         return tint(base, 0xffa1c987);
     }
 

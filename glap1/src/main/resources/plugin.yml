@@ -1,7 +1,6 @@
 name: Ledge
 version: '${version}'
 main: dev.ledge.glap1.LedgeGlap1Plugin
-api-version: '1.13'
 description: GLAP1 server adapter for Ledge.
 commands:
   ledge:
