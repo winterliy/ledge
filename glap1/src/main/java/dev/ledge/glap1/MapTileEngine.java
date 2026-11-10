@@ -666,8 +666,16 @@ final class MapTileEngine implements Runnable {
                     boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
                     samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, caveY, localZ).getKey().getKey()), caveY, exposed);
                 } else {
-                    Material top = snapshot.getBlockType(localX, surfaceY, localZ);
-                    samples[i] = new MapBlockSample(colorFor(top, snapshot.getBiome(localX, surfaceY, localZ).getKey().getKey()), surfaceY, false);
+                    // Before 1.18 ChunkSnapshot#getHighestBlockYAt can report the air block above the surface; step down
+                    // past colorless blocks the same way region-file samples do.
+                    int y = surfaceY;
+                    String biome = snapshot.getBiome(localX, y, localZ).getKey().getKey();
+                    int color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                    for (int depth = 0; depth < 8 && (color >>> 24) == 0 && y > minHeight; depth++) {
+                        y--;
+                        color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                    }
+                    samples[i] = new MapBlockSample(color, y, false);
                 }
                 loadedSamples[i] = true;
             }
