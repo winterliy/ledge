@@ -23,6 +23,8 @@ import java.util.zip.InflaterInputStream;
  */
 final class AnvilRegionReader implements AutoCloseable {
     private static final int OPEN_REGIONS = 8;
+    /** Chunk statuses that mean "fully generated" before 1.18 (1.13 used fullchunk/postprocessed, 1.14+ full). */
+    private static final java.util.Set<String> LEGACY_DONE = java.util.Set.of("full", "fullchunk", "postprocessed");
 
     private final Map<Path, RandomAccessFile> open = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
@@ -64,6 +66,13 @@ final class AnvilRegionReader implements AutoCloseable {
             if (in == null) return null;
             Object root = Nbt.readRoot(new DataInputStream(new BufferedInputStream(in)));
             if (!(root instanceof Map<?, ?> chunk)) return null;
+            if (chunk.get("Level") instanceof Map<?, ?> level) {
+                // Up to 1.17: everything lives under "Level" (Sections/Palette/BlockStates, or numeric Blocks before 1.13).
+                Object status = level.get("Status");
+                if (status != null && !LEGACY_DONE.contains(status.toString().replace("minecraft:", ""))) return null;
+                int dataVersion = chunk.get("DataVersion") instanceof Number number ? number.intValue() : 0;
+                return LegacyChunk.from(level, dataVersion, minY, worldHeight);
+            }
             Object status = chunk.get("Status");
             if (status != null && !status.toString().endsWith("full")) return null;
             return ChunkColumns.from(chunk, minY, worldHeight);
@@ -81,12 +90,18 @@ final class AnvilRegionReader implements AutoCloseable {
     }
 
     /** Decoded surface data of one chunk. */
-    static final class ChunkColumns {
-        private final int minY;
-        private final int[] surface = new int[256];
-        private final Map<Integer, Section> sections = new HashMap<>();
+    /** One 16x16x16 section that can name the block and biome at a local position. */
+    interface SectionData {
+        String block(int x, int y, int z);
+        String biome(int x, int y, int z);
+    }
 
-        private ChunkColumns(int minY) { this.minY = minY; }
+    static class ChunkColumns {
+        final int minY;
+        final int[] surface = new int[256];
+        final Map<Integer, SectionData> sections = new HashMap<>();
+
+        ChunkColumns(int minY) { this.minY = minY; }
 
         static ChunkColumns from(Map<?, ?> chunk, int minY, int worldHeight) {
             ChunkColumns columns = new ChunkColumns(minY);
@@ -107,28 +122,32 @@ final class AnvilRegionReader implements AutoCloseable {
             return columns;
         }
 
-        private int scanDown(int x, int z, int fromY) {
+        int scanDown(int x, int z, int fromY) {
             for (int y = fromY; y >= minY; y--) {
                 String name = blockName(x, y, z);
-                if (name != null && !name.endsWith(":air") && !name.endsWith("cave_air") && !name.endsWith("void_air")) return y;
+                if (name != null && !isAir(name)) return y;
             }
             return minY;
+        }
+
+        static boolean isAir(String name) {
+            return name.endsWith(":air") || name.endsWith("cave_air") || name.endsWith("void_air") || name.startsWith("legacy:0:");
         }
 
         int surfaceY(int localX, int localZ) { return surface[localZ * 16 + localX]; }
 
         String blockName(int localX, int y, int localZ) {
-            Section section = sections.get(Math.floorDiv(y, 16));
+            SectionData section = sections.get(Math.floorDiv(y, 16));
             return section == null ? null : section.block(localX, y & 15, localZ);
         }
 
         String biomeName(int localX, int y, int localZ) {
-            Section section = sections.get(Math.floorDiv(y, 16));
+            SectionData section = sections.get(Math.floorDiv(y, 16));
             return section == null ? null : section.biome(localX, y & 15, localZ);
         }
     }
 
-    private static final class Section {
+    private static final class Section implements SectionData {
         private final List<String> blockPalette;
         private final long[] blockData;
         private final List<String> biomePalette;
@@ -173,7 +192,7 @@ final class AnvilRegionReader implements AutoCloseable {
             return "minecraft:air";
         }
 
-        String block(int x, int y, int z) {
+        @Override public String block(int x, int y, int z) {
             if (blockPalette.isEmpty()) return null;
             if (blockPalette.size() == 1 || blockData == null) return blockPalette.get(0);
             int bits = Math.max(4, 32 - Integer.numberOfLeadingZeros(blockPalette.size() - 1));
@@ -181,7 +200,7 @@ final class AnvilRegionReader implements AutoCloseable {
             return value < blockPalette.size() ? blockPalette.get(value) : null;
         }
 
-        String biome(int x, int y, int z) {
+        @Override public String biome(int x, int y, int z) {
             if (biomePalette.isEmpty()) return null;
             if (biomePalette.size() == 1 || biomeData == null) return biomePalette.get(0);
             int bits = 32 - Integer.numberOfLeadingZeros(biomePalette.size() - 1);
@@ -190,8 +209,17 @@ final class AnvilRegionReader implements AutoCloseable {
         }
     }
 
-    /** Entries are packed without spanning longs (1.16+ layout). */
-    private static int packed(long[] data, int index, int bits, boolean ignored) {
+    /** Before 1.16 (data version 2527) entries span across longs; from 1.16 they are padded per long. */
+    static int packed(long[] data, int index, int bits, boolean spanning) {
+        if (spanning) {
+            long bit = (long) index * bits;
+            int longIndex = (int) (bit >>> 6);
+            int offset = (int) (bit & 63);
+            if (longIndex >= data.length) return 0;
+            long value = data[longIndex] >>> offset;
+            if (offset + bits > 64 && longIndex + 1 < data.length) value |= data[longIndex + 1] << (64 - offset);
+            return (int) (value & ((1L << bits) - 1));
+        }
         int perLong = 64 / bits;
         int longIndex = index / perLong;
         if (longIndex >= data.length) return 0;
