@@ -32,10 +32,6 @@ final class Schedulers {
 
     /** Average tick time in ms, or 0 when the server cannot report it. */
     static double averageTickMillis() {
-        try {
-            return Bukkit.getServer().getAverageTickTime();
-        } catch (UnsupportedOperationException | NoSuchMethodError exception) {
-            return 0;
-        }
+        return 0; // Server#getAverageTickTime arrived in Paper 1.15
     }
 }
