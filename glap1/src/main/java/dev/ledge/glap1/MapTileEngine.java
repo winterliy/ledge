@@ -330,6 +330,13 @@ final class MapTileEngine implements Runnable {
         return candidates.get(0);
     }
 
+    /** 1.8 snapshots expose numeric ids only. */
+    @SuppressWarnings("deprecation")
+    private static Material blockType(org.bukkit.ChunkSnapshot snapshot, int x, int y, int z) {
+        Material material = Material.getMaterial(snapshot.getBlockTypeId(x, y, z));
+        return material == null ? Material.AIR : material;
+    }
+
     private static Material material(String name) {
         if (name == null) return Material.AIR;
         if (name.startsWith("legacy:")) {
@@ -672,8 +679,8 @@ final class MapTileEngine implements Runnable {
                 int localZ = z & 15;
                 int surfaceY = snapshot.getHighestBlockYAt(localX, localZ);
                 if (key.renderer() == MapRendererType.CAVE) {
-                    Material floor = snapshot.getBlockType(localX, caveY, localZ);
-                    Material above = snapshot.getBlockType(localX, caveY + 1, localZ);
+                    Material floor = blockType(snapshot, localX, caveY, localZ);
+                    Material above = blockType(snapshot, localX, caveY + 1, localZ);
                     boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
                     samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, localZ).name().toLowerCase(java.util.Locale.ROOT)), caveY, exposed);
                 } else {
@@ -681,10 +688,10 @@ final class MapTileEngine implements Runnable {
                     // past colorless blocks the same way region-file samples do.
                     int y = surfaceY;
                     String biome = snapshot.getBiome(localX, localZ).name().toLowerCase(java.util.Locale.ROOT);
-                    int color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                    int color = colorFor(blockType(snapshot, localX, y, localZ), biome);
                     for (int depth = 0; depth < 8 && (color >>> 24) == 0 && y > minHeight; depth++) {
                         y--;
-                        color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                        color = colorFor(blockType(snapshot, localX, y, localZ), biome);
                     }
                     samples[i] = new MapBlockSample(color, y, false);
                 }

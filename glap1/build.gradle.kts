@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(project(":common"))
-    compileOnly("com.destroystokyo.paper:paper-api:1.12.2-R0.1-SNAPSHOT")
+    compileOnly("org.github.paperspigot:paperspigot-api:1.8.8-R0.1-SNAPSHOT")
 }
 
 tasks.jar {
