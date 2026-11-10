@@ -23,6 +23,50 @@ import java.util.List;
 public final class LedgeMapScreen extends Screen {
     private int centerX;
     private int centerZ;
+    /** Tiles drawn left/right and above/below the center tile; updated every frame from the screen size. */
+    private int visibleRangeX = 2;
+    private int visibleRangeZ = 2;
+    /** Diamond bounds of the 3D view in tiles (see renderVirtual). */
+    private int projectedDiff = 8;
+    private int projectedSum = 8;
+
+    private String targetLabel() { return targetLabel.isEmpty() ? "차원 선택" : targetLabel; }
+
+    /** The world/dimension button hugs its label (at most 220 px, never into the other buttons). */
+    private int targetButtonRight() {
+        return Math.min(width - 384, 10 + Math.min(220, font.width(targetLabel()) + 12));
+    }
+
+    private static final int FACE_SIZE = 12;
+    /** Screen position of the player's face marker this frame (MIN_VALUE when hidden). */
+    private int playerMarkerX = Integer.MIN_VALUE;
+    private int playerMarkerY;
+
+    /** The player's skin face replaces the old red dot; hovering it shows the name. */
+    private void drawPlayerFace(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        if (playerMarkerX == Integer.MIN_VALUE || minecraft.player == null) return;
+        int x = playerMarkerX - FACE_SIZE / 2;
+        int y = playerMarkerY - FACE_SIZE / 2;
+        graphics.fill(x - 1, y - 1, x + FACE_SIZE + 1, y + FACE_SIZE + 1, 0xff000000);
+        net.minecraft.client.gui.components.PlayerFaceExtractor.extractRenderState(graphics, minecraft.player.getSkin(), x, y, FACE_SIZE);
+        if (mouseX >= x - 1 && mouseX <= x + FACE_SIZE && mouseY >= y - 1 && mouseY <= y + FACE_SIZE && !contextMenuVisible && !annotationDialog) {
+            // Drawn here (inside the virtual-GUI scale) so it sits right next to the cursor; vanilla tooltips
+            // render later in unscaled coordinates and would land far from the mouse.
+            String name = minecraft.player.getName().getString();
+            int tx = mouseX + 10;
+            int ty = mouseY - 14;
+            int tw = font.width(name) + 8;
+            if (tx + tw > width) tx = mouseX - 10 - tw;
+            if (ty < 0) ty = mouseY + 10;
+            graphics.fill(tx, ty, tx + tw, ty + 14, 0xf0100010);
+            graphics.outline(tx, ty, tw, 14, 0xff5000ff);
+            graphics.text(font, name, tx + 4, ty + 3, 0xffffffff);
+        }
+    }
+
+    private boolean insideProjectedView(int a, int b) {
+        return Math.abs(a - b) <= projectedDiff && Math.abs(a + b) <= projectedSum;
+    }
     private int zoom;
     private boolean requested;
     private boolean coordinatesVisible = true;
@@ -137,8 +181,10 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private void requestCurrentTiles() {
-        for (int x = centerX - 2; x <= centerX + 2; x++) {
-            for (int z = centerZ - 2; z <= centerZ + 2; z++) {
+        boolean projected = threeDimensional && targetRenderer == 0;
+        for (int x = centerX - visibleRangeX - 1; x <= centerX + visibleRangeX + 1; x++) {
+            for (int z = centerZ - visibleRangeZ - 1; z <= centerZ + visibleRangeZ + 1; z++) {
+                if (projected && !insideProjectedView(x - centerX, z - centerZ)) continue;
                 LedgeFabricClient.requestTile(targetWorldId, dimension, targetRenderer, targetResolution, x, z, zoom);
             }
         }
@@ -248,10 +294,25 @@ public final class LedgeMapScreen extends Screen {
         if (projectedSurface) graphics.pose().popMatrix();
         int panX = panOffsetX();
         int panZ = panOffsetZ();
-        int range = projectedSurface ? 1 : 2;
-        if (!projectedSurface) graphics.enableScissor(left, top, left + tileSize * 3, top + tileSize * 3);
-        for (int tileX = centerX - range; tileX <= centerX + range; tileX++) {
-            for (int tileZ = centerZ - range; tileZ <= centerZ + range; tileZ++) {
+        // The map fills the whole screen; the centered square only anchors the tile grid (tile -1..1 sits inside it).
+        int minDx = Math.floorDiv(-left - panX, tileSize) - 1;
+        int maxDx = Math.floorDiv(width - left - panX, tileSize) - 1;
+        int minDz = Math.floorDiv(-top - panZ, tileSize) - 1;
+        int maxDz = Math.floorDiv(height - top - panZ, tileSize) - 1;
+        if (projectedSurface) {
+            // Isometric view: tile (a, b) from the center lands at x ~ (a - b) / 2, y ~ (a + b) / 4 tile sizes, so the
+            // screen is covered by the diamond |a - b| <= width / tile, |a + b| <= 2 * height / tile (plus a margin).
+            projectedDiff = width / tileSize + 2;
+            projectedSum = 2 * height / tileSize + 3;
+            int reach = (projectedDiff + projectedSum) / 2 + 1;
+            minDx = minDz = -reach;
+            maxDx = maxDz = reach;
+        }
+        visibleRangeX = Math.max(-minDx, maxDx);
+        visibleRangeZ = Math.max(-minDz, maxDz);
+        for (int tileX = centerX + minDx; tileX <= centerX + maxDx; tileX++) {
+            for (int tileZ = centerZ + minDz; tileZ <= centerZ + maxDz; tileZ++) {
+                if (projectedSurface && !insideProjectedView(tileX - centerX, tileZ - centerZ)) continue;
                 int x = left + (tileX - centerX + 1) * tileSize + panX;
                 int z = top + (tileZ - centerZ + 1) * tileSize + panZ;
                 if (projectedSurface) {
@@ -283,11 +344,7 @@ public final class LedgeMapScreen extends Screen {
                 }
             }
         }
-        if (!projectedSurface) graphics.disableScissor();
         if (projectedSurface) pushMapTransform(graphics, top, mapSize);
-        graphics.outline(left, top, tileSize * 3, tileSize * 3, 0xff59636c);
-        // Markers and annotations stay inside the map frame.
-        if (!projectedSurface) graphics.enableScissor(left, top, left + tileSize * 3, top + tileSize * 3);
         var playerTarget = LedgeFabricClient.serverTarget();
         if (minecraft.player != null && LedgeFabricClient.showPlayerMarker() && playerTarget != null
                 && playerTarget.worldId().equals(targetWorldId) && playerTarget.dimension().equals(dimension)) {
@@ -299,7 +356,19 @@ public final class LedgeMapScreen extends Screen {
                 markerX -= elevation * 2.0;
                 markerZ -= elevation * 2.0;
             }
-            graphics.fill((int) markerX - 3, (int) markerZ - 3, (int) markerX + 4, (int) markerZ + 4, 0xffff5a5a);
+            // The face is drawn after the map transform is popped so it stays upright; project the point by hand.
+            if (threeDimensional) {
+                double cx = width / 2.0;
+                double cy = top + mapSize / 2.0;
+                double dx = markerX - cx;
+                double dz = markerZ - cy;
+                markerX = cx + (dx - dz) / 2.0;
+                markerZ = cy + (dx + dz) / 4.0;
+            }
+            playerMarkerX = (int) Math.round(markerX);
+            playerMarkerY = (int) Math.round(markerZ);
+        } else {
+            playerMarkerX = Integer.MIN_VALUE;
         }
         for (var area : LocalMapAnnotations.areas()) {
             int rgb = Integer.parseInt(area.color().substring(1), 16);
@@ -322,51 +391,49 @@ public final class LedgeMapScreen extends Screen {
             graphics.fill(x - 4, z - 4, x + 5, z + 5, 0xff000000 | rgb);
             graphics.text(font, marker.name(), x + 6, z - 5, 0xffffffff);
         }
-        if (!projectedSurface) graphics.disableScissor();
         graphics.pose().popMatrix();
+        drawPlayerFace(graphics, mouseX, mouseY);
         if (!coordinatesVisible) {
-            graphics.fill(10, height - 30, COORDINATE_COLLAPSED_RIGHT, height - 12, 0xd9000000);
+            graphics.fill(10, height - 30, COORDINATE_COLLAPSED_RIGHT, height - 12, 0x99000000);
             graphics.text(font, "좌표 +", 16, height - 25, 0xffffffff);
         }
-        graphics.fill(width - 196, 10, width - 112, 36, 0xd9000000);
+        graphics.fill(width - 196, 10, width - 112, 36, 0x99000000);
         graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", width - 190, 18, 0xffffffff);
-        graphics.fill(width - 286, 10, width - 258, 36, 0xd9000000);
+        graphics.fill(width - 286, 10, width - 258, 36, 0x99000000);
         graphics.centeredText(font, "−", width - 272, 18, 0xffffffff);
-        graphics.fill(width - 252, 10, width - 224, 36, 0xd9000000);
+        graphics.fill(width - 252, 10, width - 224, 36, 0x99000000);
         graphics.centeredText(font, "+", width - 238, 18, 0xffffffff);
-        graphics.fill(width - 334, 10, width - 290, 36, 0xd9000000);
+        graphics.fill(width - 334, 10, width - 290, 36, 0x99000000);
         graphics.centeredText(font, threeDimensional ? "3D" : "2D", width - 312, 18, 0xffffffff);
         int targetButtonLeft = 10;
-        int targetButtonRight = width - 384;
-        graphics.fill(width - 378, 10, width - 340, 36, 0xd9000000);
+        int targetButtonRight = targetButtonRight();
+        graphics.fill(width - 378, 10, width - 340, 36, 0x99000000);
         graphics.pose().pushMatrix();
         graphics.pose().translate(width - 359, 23);
         graphics.pose().scale(2.0f, 2.0f);
         graphics.centeredText(font, "↻", 0, -4, 0xffffffff);
         graphics.pose().popMatrix();
-        graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0xd9000000);
-        String shownTarget = targetLabel.isEmpty() ? "차원 선택" : targetLabel;
-        int targetCharacters = Math.max(1, (targetButtonRight - targetButtonLeft - 12) / 6);
-        if (shownTarget.length() > targetCharacters) {
-            shownTarget = shownTarget.substring(0, Math.max(0, targetCharacters - 1)) + "…";
+        graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0x99000000);
+        String shownTarget = targetLabel();
+        if (font.width(shownTarget) > targetButtonRight - targetButtonLeft - 12) {
+            shownTarget = font.plainSubstrByWidth(shownTarget, targetButtonRight - targetButtonLeft - 12 - font.width("…")) + "…";
         }
         graphics.text(font, shownTarget, targetButtonLeft + 6, 18, 0xffffffff);
-        graphics.fill(width - 104, 10, width - 10, 36, 0xd9000000);
+        graphics.fill(width - 104, 10, width - 10, 36, 0x99000000);
         graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", width - 98, 18, 0xffffffff);
         if (coordinatesVisible && minecraft.player != null) {
             int worldX;
             int worldZ;
             var pos = minecraft.player.blockPosition();
             MapPosition mapMouse = unprojectMapPosition(mouseX, mouseY, left, top, mapSize);
-            if (mapMouse.x() >= left && mapMouse.x() < left + mapSize
-                    && mapMouse.y() >= top && mapMouse.y() < top + mapSize) {
+            if (threeDimensional || (mapMouse.x() >= 0 && mapMouse.x() < width && mapMouse.y() >= 0 && mapMouse.y() < height)) {
                 worldX = (centerX - 1) * tileBlocks() + (int) Math.floor((mapMouse.x() - left - panOffsetX()) * tileBlocks() * 3.0 / mapSize);
                 worldZ = (centerZ - 1) * tileBlocks() + (int) Math.floor((mapMouse.y() - top - panOffsetZ()) * tileBlocks() * 3.0 / mapSize);
             } else {
                 worldX = pos.getX();
                 worldZ = pos.getZ();
             }
-            graphics.fill(10, height - 30, COORDINATE_PANEL_RIGHT, height - 12, 0xd9000000);
+            graphics.fill(10, height - 30, COORDINATE_PANEL_RIGHT, height - 12, 0x99000000);
             graphics.text(font, "좌표  X " + worldX + "  Y " + pos.getY() + "  Z " + worldZ, 16, height - 25, 0xffdce5eb);
             graphics.text(font, "×", COORDINATE_PANEL_RIGHT - 12, height - 25, 0xffffffff);
         }
@@ -374,7 +441,9 @@ public final class LedgeMapScreen extends Screen {
                 : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
                 : selectingArea ? "자유 선택 · Shift: 가로/세로 직선 · 놓으면 완료" :
                 "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
-        graphics.centeredText(font, hint, width / 2, height - 18, 0xffb8c2ca);
+        int hintWidth = font.width(hint);
+        graphics.fill(width / 2 - hintWidth / 2 - 6, height - 22, width / 2 + hintWidth / 2 + 6, height - 6, 0x99000000);
+        graphics.centeredText(font, hint, width / 2, height - 18, 0xffdce5eb);
         if (statusMessage != null && System.currentTimeMillis() < statusUntil) {
             int textWidth = font.width(statusMessage);
             graphics.fill(width / 2 - textWidth / 2 - 6, height - 40, width / 2 + textWidth / 2 + 6, height - 26, 0xe0000000);
@@ -461,11 +530,11 @@ public final class LedgeMapScreen extends Screen {
             return true;
         }
         if (y >= 10 && y <= 36 && x >= width - 286 && x <= width - 258) {
-            changeZoom(-1);
+            zoomOut();
             return true;
         }
         if (y >= 10 && y <= 36 && x >= width - 252 && x <= width - 224) {
-            changeZoom(1);
+            zoomIn();
             return true;
         }
         if (y >= 10 && y <= 36 && x >= width - 334 && x <= width - 290) {
@@ -478,7 +547,7 @@ public final class LedgeMapScreen extends Screen {
             showStatus("지도 타일을 다시 불러옵니다.");
             return true;
         }
-        if (y >= 10 && y <= 36 && x >= 10 && x <= width - 384) {
+        if (y >= 10 && y <= 36 && x >= 10 && x <= targetButtonRight()) {
             cycleTarget();
             return true;
         }
@@ -599,7 +668,7 @@ public final class LedgeMapScreen extends Screen {
         lastMouseY = event.y();
         int mapSize = Math.min(height - 100, width - 300);
         int tileSize = Math.max(96, mapSize) / 3;
-        // Keep the sub-tile remainder as a pixel offset so 2D panning follows the mouse smoothly.
+        // Keep the sub-tile remainder as a pixel offset so panning (2D and 3D) follows the mouse smoothly.
         int shiftX = (int) Math.floor((dragX + tileSize / 2.0) / tileSize);
         int shiftZ = (int) Math.floor((dragY + tileSize / 2.0) / tileSize);
         if (shiftX != 0 || shiftZ != 0) {
@@ -675,10 +744,10 @@ public final class LedgeMapScreen extends Screen {
         int worldZ0 = mapWorldZ(left, top, size, sx0, sy0);
         int worldX1 = mapWorldX(left, top, size, sx1, sy1);
         int worldZ1 = mapWorldZ(left, top, size, sx1, sy1);
-        int frameX0 = mapWorldX(left, top, size, left, top);
-        int frameZ0 = mapWorldZ(left, top, size, left, top);
-        int frameX1 = mapWorldX(left, top, size, left + size, top + size);
-        int frameZ1 = mapWorldZ(left, top, size, left + size, top + size);
+        int frameX0 = mapWorldX(left, top, size, 0, 0);
+        int frameZ0 = mapWorldZ(left, top, size, 0, 0);
+        int frameX1 = mapWorldX(left, top, size, width, height);
+        int frameZ1 = mapWorldZ(left, top, size, width, height);
         threeDimensional = wasThreeDimensional;
         int blocks = tileBlocks();
         double pixelsPerBlock = 256.0 / blocks;
@@ -753,7 +822,7 @@ public final class LedgeMapScreen extends Screen {
         lastScrollMillis = now;
         scrollAccumulator += verticalAmount;
         if (Math.abs(scrollAccumulator) >= SCROLL_STEP && now - lastZoomMillis >= 150) {
-            changeZoom(scrollAccumulator > 0 ? 1 : -1);
+            if (scrollAccumulator > 0) zoomIn(); else zoomOut();
             scrollAccumulator = 0;
             lastZoomMillis = now;
         }
@@ -766,6 +835,11 @@ public final class LedgeMapScreen extends Screen {
     private double scrollAccumulator;
     private long lastScrollMillis;
     private long lastZoomMillis;
+
+    /** A higher zoom level covers more blocks per tile, so zooming in lowers it. */
+    private void zoomIn() { changeZoom(-1); }
+
+    private void zoomOut() { changeZoom(1); }
 
     private void changeZoom(int amount) {
         int nextZoom = Math.max(0, Math.min(12, zoom + amount));
@@ -806,11 +880,11 @@ public final class LedgeMapScreen extends Screen {
         }
         boolean shortcut = event.hasControlDown() || event.hasControlDownWithQuirk();
         if (shortcut && (key == InputConstants.KEY_EQUALS || key == InputConstants.KEY_ADD)) {
-            changeZoom(1);
+            zoomIn();
             return true;
         }
         if (shortcut && (key == InputConstants.KEY_MINUS || key == KEYPAD_MINUS)) {
-            changeZoom(-1);
+            zoomOut();
             return true;
         }
         if (escape && contextMenuVisible) {
@@ -948,9 +1022,8 @@ public final class LedgeMapScreen extends Screen {
         int size = mapSize();
         int left = (width - size) / 2;
         int top = (height - size) / 2;
-        MapPosition mapPosition = unprojectMapPosition(x, y, left, top, size);
-        return mapPosition.x() >= left && mapPosition.x() < left + size
-                && mapPosition.y() >= top && mapPosition.y() < top + size;
+        // The whole screen is map now (buttons are checked before this).
+        return x >= 0 && x < width && y >= 0 && y < height;
     }
 
     private int mapWorldX(int left, int top, int size, int x, int y) {
@@ -1020,9 +1093,10 @@ public final class LedgeMapScreen extends Screen {
         return drewAny;
     }
 
-    private int panOffsetX() { return threeDimensional ? 0 : (int) Math.round(dragX); }
+    // dragX/dragY are kept in map space (3D drags are unprojected), so both views pan by the sub-tile remainder.
+    private int panOffsetX() { return (int) Math.round(dragX); }
 
-    private int panOffsetZ() { return threeDimensional ? 0 : (int) Math.round(dragY); }
+    private int panOffsetZ() { return (int) Math.round(dragY); }
 
     private int mapX(int left, int size, int worldX) {
         return left + panOffsetX() + (int) ((worldX - (centerX - 1) * tileBlocks()) * size / (tileBlocks() * 3.0));
@@ -1066,8 +1140,8 @@ public final class LedgeMapScreen extends Screen {
                 .map(point -> new ScreenPoint(mapX(left, size, point.x()), mapZ(top, size, point.z())))
                 .toList();
         if (filled) {
-            int minY = Math.max(top, polygon.stream().mapToInt(ScreenPoint::y).min().orElse(top));
-            int maxY = Math.min(top + size, polygon.stream().mapToInt(ScreenPoint::y).max().orElse(top));
+            int minY = Math.max(0, polygon.stream().mapToInt(ScreenPoint::y).min().orElse(0));
+            int maxY = Math.min(height, polygon.stream().mapToInt(ScreenPoint::y).max().orElse(0));
             int rowStep = Math.max(1, (maxY - minY + 127) / 128);
             List<Integer> intersections = new ArrayList<>(polygon.size());
             for (int y = minY; y < maxY; y += rowStep) {
@@ -1081,9 +1155,9 @@ public final class LedgeMapScreen extends Screen {
                 }
                 intersections.sort(Comparator.naturalOrder());
                 for (int i = 0; i + 1 < intersections.size(); i += 2) {
-                    int x1 = Math.max(left, intersections.get(i));
-                    int x2 = Math.min(left + size, intersections.get(i + 1));
-                    if (x2 > x1) graphics.fill(x1, y, x2, Math.min(y + rowStep, top + size), fillColor);
+                    int x1 = Math.max(0, intersections.get(i));
+                    int x2 = Math.min(width, intersections.get(i + 1));
+                    if (x2 > x1) graphics.fill(x1, y, x2, Math.min(y + rowStep, height), fillColor);
                 }
             }
         }

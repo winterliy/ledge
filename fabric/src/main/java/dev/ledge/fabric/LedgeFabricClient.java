@@ -27,7 +27,7 @@ public final class LedgeFabricClient implements ClientModInitializer {
     private static final int FRAGMENT_BYTES = 24_000;
     private static final int MAX_TILE_BYTES = 1_000_000;
     private static final int MAX_TRANSFERS = 16;
-    private static final int CACHE_LIMIT = 128;
+    private static final int CACHE_LIMIT = 256; // a full-screen map shows ~40 tiles plus fallbacks
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
             Identifier.fromNamespaceAndPath("ledge", "controls"));
     private static final KeyMapping OPEN_MAP = KeyMappingHelper.registerKeyMapping(
