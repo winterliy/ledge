@@ -8,6 +8,10 @@ dependencies {
     minecraft("com.mojang:minecraft:${property("minecraft_version")}")
     implementation("net.fabricmc:fabric-loader:${property("loader_version")}")
     implementation("net.fabricmc.fabric-api:fabric-api:${property("fabric_api_version")}")
+    // Ship the Fabric API modules Ledge uses inside the jar (jar-in-jar) so players only need Fabric Loader.
+    for (module in listOf("fabric-api-base", "fabric-lifecycle-events-v1", "fabric-networking-api-v1", "fabric-key-mapping-api-v1")) {
+        include(fabricApi.module(module, property("fabric_api_version").toString()))
+    }
 }
 
 java {

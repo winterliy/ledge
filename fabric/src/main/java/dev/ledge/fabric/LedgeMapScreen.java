@@ -69,7 +69,9 @@ public final class LedgeMapScreen extends Screen {
     }
     private int zoom;
     private boolean requested;
-    private boolean coordinatesVisible = true;
+    /** The whole top toolbar (buttons + coordinates); the close block collapses it to a single "+". */
+    private boolean toolbarVisible = true;
+    private int coordinateWidth = 200;
     private String dimension = "";
     private String targetWorldId = "";
     private String targetLabel = "";
@@ -393,49 +395,55 @@ public final class LedgeMapScreen extends Screen {
         }
         graphics.pose().popMatrix();
         drawPlayerFace(graphics, mouseX, mouseY);
-        if (!coordinatesVisible) {
-            graphics.fill(coordLeft(), COORD_TOP, coordLeft() + COORDINATE_COLLAPSED_WIDTH, COORD_BOTTOM, 0x99000000);
-            graphics.text(font, "좌표 +", coordLeft() + 6, COORD_TOP + 8, 0xffffffff);
-        }
-        graphics.fill(buttonLeft(PLAYER), 10, buttonRight(PLAYER), 36, 0x99000000);
-        graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", buttonLeft(PLAYER) + 6, 18, 0xffffffff);
-        graphics.fill(buttonLeft(ZOOM_OUT), 10, buttonRight(ZOOM_OUT), 36, 0x99000000);
-        graphics.centeredText(font, "−", buttonCenter(ZOOM_OUT), 18, 0xffffffff);
-        graphics.fill(buttonLeft(ZOOM_IN), 10, buttonRight(ZOOM_IN), 36, 0x99000000);
-        graphics.centeredText(font, "+", buttonCenter(ZOOM_IN), 18, 0xffffffff);
-        graphics.fill(buttonLeft(VIEW), 10, buttonRight(VIEW), 36, 0x99000000);
-        graphics.centeredText(font, threeDimensional ? "3D" : "2D", buttonCenter(VIEW), 18, 0xffffffff);
-        int targetButtonLeft = 10;
-        int targetButtonRight = targetButtonRight();
-        graphics.fill(buttonLeft(REFRESH), 10, buttonRight(REFRESH), 36, 0x99000000);
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(buttonCenter(REFRESH), 23);
-        graphics.pose().scale(2.0f, 2.0f);
-        graphics.centeredText(font, "↻", 0, -4, 0xffffffff);
-        graphics.pose().popMatrix();
-        graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0x99000000);
-        String shownTarget = targetLabel();
-        if (font.width(shownTarget) > targetButtonRight - targetButtonLeft - 12) {
-            shownTarget = font.plainSubstrByWidth(shownTarget, targetButtonRight - targetButtonLeft - 12 - font.width("…")) + "…";
-        }
-        graphics.text(font, shownTarget, targetButtonLeft + 6, 18, 0xffffffff);
-        graphics.fill(buttonLeft(PRINT), 10, buttonRight(PRINT), 36, 0x99000000);
-        graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", buttonLeft(PRINT) + 6, 18, 0xffffffff);
-        if (coordinatesVisible && minecraft.player != null) {
-            int worldX;
-            int worldZ;
-            var pos = minecraft.player.blockPosition();
-            MapPosition mapMouse = unprojectMapPosition(mouseX, mouseY, left, top, mapSize);
-            if (threeDimensional || (mapMouse.x() >= 0 && mapMouse.x() < width && mapMouse.y() >= 0 && mapMouse.y() < height)) {
-                worldX = (centerX - 1) * tileBlocks() + (int) Math.floor((mapMouse.x() - left - panOffsetX()) * tileBlocks() * 3.0 / mapSize);
-                worldZ = (centerZ - 1) * tileBlocks() + (int) Math.floor((mapMouse.y() - top - panOffsetZ()) * tileBlocks() * 3.0 / mapSize);
-            } else {
-                worldX = pos.getX();
-                worldZ = pos.getZ();
+        if (!toolbarVisible) {
+            // Collapsed: a single "+" block brings the whole toolbar back.
+            graphics.fill(10, 10, 10 + TOGGLE_WIDTH, 36, 0x99000000);
+            graphics.centeredText(font, "+", 10 + TOGGLE_WIDTH / 2, 18, 0xffffffff);
+        } else {
+            graphics.fill(buttonLeft(PLAYER), 10, buttonRight(PLAYER), 36, 0x99000000);
+            graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", buttonLeft(PLAYER) + 6, 18, 0xffffffff);
+            graphics.fill(buttonLeft(ZOOM_OUT), 10, buttonRight(ZOOM_OUT), 36, 0x99000000);
+            graphics.centeredText(font, "−", buttonCenter(ZOOM_OUT), 18, 0xffffffff);
+            graphics.fill(buttonLeft(ZOOM_IN), 10, buttonRight(ZOOM_IN), 36, 0x99000000);
+            graphics.centeredText(font, "+", buttonCenter(ZOOM_IN), 18, 0xffffffff);
+            graphics.fill(buttonLeft(VIEW), 10, buttonRight(VIEW), 36, 0x99000000);
+            graphics.centeredText(font, threeDimensional ? "3D" : "2D", buttonCenter(VIEW), 18, 0xffffffff);
+            int targetButtonLeft = 10;
+            int targetButtonRight = targetButtonRight();
+            graphics.fill(buttonLeft(REFRESH), 10, buttonRight(REFRESH), 36, 0x99000000);
+            graphics.pose().pushMatrix();
+            graphics.pose().translate(buttonCenter(REFRESH), 23);
+            graphics.pose().scale(2.0f, 2.0f);
+            graphics.centeredText(font, "↻", 0, -4, 0xffffffff);
+            graphics.pose().popMatrix();
+            graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0x99000000);
+            String shownTarget = targetLabel();
+            if (font.width(shownTarget) > targetButtonRight - targetButtonLeft - 12) {
+                shownTarget = font.plainSubstrByWidth(shownTarget, targetButtonRight - targetButtonLeft - 12 - font.width("…")) + "…";
             }
-            graphics.fill(coordLeft(), COORD_TOP, coordLeft() + COORDINATE_PANEL_WIDTH, COORD_BOTTOM, 0x99000000);
-            graphics.text(font, "좌표  X " + worldX + "  Y " + pos.getY() + "  Z " + worldZ, coordLeft() + 6, COORD_TOP + 8, 0xffdce5eb);
-            graphics.text(font, "×", coordLeft() + COORDINATE_PANEL_WIDTH - 12, COORD_TOP + 8, 0xffffffff);
+            graphics.text(font, shownTarget, targetButtonLeft + 6, 18, 0xffffffff);
+            graphics.fill(buttonLeft(PRINT), 10, buttonRight(PRINT), 36, 0x99000000);
+            graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", buttonLeft(PRINT) + 6, 18, 0xffffffff);
+            if (minecraft.player != null) {
+                int worldX;
+                int worldZ;
+                var pos = minecraft.player.blockPosition();
+                MapPosition mapMouse = unprojectMapPosition(mouseX, mouseY, left, top, mapSize);
+                if (threeDimensional || (mapMouse.x() >= 0 && mapMouse.x() < width && mapMouse.y() >= 0 && mapMouse.y() < height)) {
+                    worldX = (centerX - 1) * tileBlocks() + (int) Math.floor((mapMouse.x() - left - panOffsetX()) * tileBlocks() * 3.0 / mapSize);
+                    worldZ = (centerZ - 1) * tileBlocks() + (int) Math.floor((mapMouse.y() - top - panOffsetZ()) * tileBlocks() * 3.0 / mapSize);
+                } else {
+                    worldX = pos.getX();
+                    worldZ = pos.getZ();
+                }
+                String coordinates = "좌표  X " + worldX + "  Y " + pos.getY() + "  Z " + worldZ;
+                coordinateWidth = font.width(coordinates) + 12;
+                graphics.fill(coordLeft(), COORD_TOP, coordLeft() + coordinateWidth, COORD_BOTTOM, 0x99000000);
+                graphics.text(font, coordinates, coordLeft() + 6, COORD_TOP + 8, 0xffdce5eb);
+            }
+            // Separate close block at the end of the row: hides the whole toolbar.
+            graphics.fill(closeLeft(), 10, closeLeft() + TOGGLE_WIDTH, 36, 0x99000000);
+            graphics.centeredText(font, "×", closeLeft() + TOGGLE_WIDTH / 2, 18, 0xffffffff);
         }
         String hint = printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
                 : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
@@ -517,13 +525,15 @@ public final class LedgeMapScreen extends Screen {
                 return true;
             }
         }
-        if (coordinatesVisible && x >= coordLeft() + COORDINATE_PANEL_WIDTH - 18 && x <= coordLeft() + COORDINATE_PANEL_WIDTH && y >= COORD_TOP && y <= COORD_BOTTOM) {
-            coordinatesVisible = false;
-            return true;
-        }
-        if (!coordinatesVisible && x >= coordLeft() && x <= coordLeft() + COORDINATE_COLLAPSED_WIDTH && y >= COORD_TOP && y <= COORD_BOTTOM) {
-            coordinatesVisible = true;
-            return true;
+        if (y >= 10 && y <= 36) {
+            if (!toolbarVisible && x >= 10 && x <= 10 + TOGGLE_WIDTH) {
+                toolbarVisible = true;
+                return true;
+            }
+            if (toolbarVisible && x >= closeLeft() && x <= closeLeft() + TOGGLE_WIDTH) {
+                toolbarVisible = false;
+                return true;
+            }
         }
         if (onButton(PLAYER, x, y)) {
             LedgeFabricClient.togglePlayerMarker();
@@ -547,7 +557,7 @@ public final class LedgeMapScreen extends Screen {
             showStatus("지도 타일을 다시 불러옵니다.");
             return true;
         }
-        if (y >= 10 && y <= 36 && x >= 10 && x <= targetButtonRight()) {
+        if (toolbarVisible && y >= 10 && y <= 36 && x >= 10 && x <= targetButtonRight()) {
             cycleTarget();
             return true;
         }
@@ -798,13 +808,15 @@ public final class LedgeMapScreen extends Screen {
         }
     }
 
-    private static final int COORDINATE_PANEL_WIDTH = 240;
-    private static final int COORDINATE_COLLAPSED_WIDTH = 50;
+    private static final int TOGGLE_WIDTH = 28;
     /** The coordinate panel ends the single left-aligned toolbar row, right after the print button. */
     private static final int COORD_TOP = 10;
     private static final int COORD_BOTTOM = 36;
 
     private int coordLeft() { return buttonRight(PRINT) + BUTTON_GAP; }
+
+    /** The close block follows the coordinate box, whose width hugs its text. */
+    private int closeLeft() { return coordLeft() + coordinateWidth + BUTTON_GAP; }
 
     // Toolbar buttons after the world button, packed left to right: refresh, 2D/3D, -, +, player, print.
     private static final int REFRESH = 0, VIEW = 1, ZOOM_OUT = 2, ZOOM_IN = 3, PLAYER = 4, PRINT = 5;
@@ -822,7 +834,7 @@ public final class LedgeMapScreen extends Screen {
     private int buttonCenter(int button) { return buttonLeft(button) + BUTTON_WIDTHS[button] / 2; }
 
     private boolean onButton(int button, double x, double y) {
-        return y >= 10 && y <= 36 && x >= buttonLeft(button) && x <= buttonRight(button);
+        return toolbarVisible && y >= 10 && y <= 36 && x >= buttonLeft(button) && x <= buttonRight(button);
     }
     private static final int MAP_BACKGROUND = 0xff10151a;
     private String statusMessage;
