@@ -1,6 +1,7 @@
 package dev.ledge.common;
 
 /** Inclusive rectangular selection in block coordinates. */
+@com.github.bsideup.jabel.Desugar
 public record MapBounds(int minX, int minZ, int maxX, int maxZ) {
     public MapBounds {
         if (minX > maxX || minZ > maxZ) {

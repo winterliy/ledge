@@ -3,6 +3,7 @@ package dev.ledge.common;
 import java.util.Objects;
 
 /** User-created point marker shared by the web map and Fabric map. */
+@com.github.bsideup.jabel.Desugar
 public record MapMarker(String id, String worldId, String dimensionId, String name,
                         MapCoordinate position, String bannerColorHex) {
     public MapMarker {

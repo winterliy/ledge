@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.util.Objects;
 
 /** A projected surface tile and the local pixel offset of its height-64 plane origin. */
+@com.github.bsideup.jabel.Desugar
 public record MapProjectedTile(BufferedImage image, int topOffset) {
     private static final int MAGIC = 0x4c444750;
     private static final int VERSION = 1;

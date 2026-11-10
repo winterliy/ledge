@@ -88,7 +88,7 @@ final class BuiltInPregenerator implements Pregenerator {
         if (tasks.isEmpty()) return "No pre-generation tasks.";
         StringBuilder text = new StringBuilder();
         for (Task task : tasks.values()) {
-            if (!text.isEmpty()) text.append('\n');
+            if (text.length() > 0) text.append('\n');
             text.append(task.world).append(": ").append(task.percent()).append("% (")
                     .append(task.done.get()).append('/').append(task.total).append(" chunks, ")
                     .append(task.handle == null ? "paused" : "running").append(')');

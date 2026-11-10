@@ -3,6 +3,7 @@ package dev.ledge.common;
 import java.util.Objects;
 
 /** Stable address of a bounded image tile. */
+@com.github.bsideup.jabel.Desugar
 public record MapTileKey(
         String worldId,
         String dimensionId,

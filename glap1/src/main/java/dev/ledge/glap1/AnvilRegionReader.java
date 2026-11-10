@@ -24,7 +24,7 @@ import java.util.zip.InflaterInputStream;
 final class AnvilRegionReader implements AutoCloseable {
     private static final int OPEN_REGIONS = 8;
     /** Chunk statuses that mean "fully generated" before 1.18 (1.13 used fullchunk/postprocessed, 1.14+ full). */
-    private static final java.util.Set<String> LEGACY_DONE = java.util.Set.of("full", "fullchunk", "postprocessed");
+    private static final java.util.Set<String> LEGACY_DONE = new java.util.HashSet<>(java.util.Arrays.asList("full", "fullchunk", "postprocessed"));
 
     private final Map<Path, RandomAccessFile> open = new LinkedHashMap<>(16, 0.75f, true) {
         @Override

@@ -34,7 +34,7 @@ final class LedgeMapHttpServer {
     private ThreadPoolExecutor requests;
     private volatile byte[] worldsSnapshot = "[]".getBytes(StandardCharsets.UTF_8);
     private volatile byte[] playersSnapshot = "[]".getBytes(StandardCharsets.UTF_8);
-    private volatile Map<String, String> knownWorlds = Map.of();
+    private volatile Map<String, String> knownWorlds = java.util.Collections.emptyMap();
 
     LedgeMapHttpServer(JavaPlugin plugin, MapTileEngine tileEngine) {
         this.plugin = plugin;
@@ -82,7 +82,7 @@ final class LedgeMapHttpServer {
             if (!"GET".equals(exchange.getRequestMethod())) {
                 respond(exchange, 405, "text/plain; charset=utf-8", "GET only");
             } else if ("/".equals(path)) {
-                byte[] page = plugin.getResource("web/index.html").readAllBytes();
+                byte[] page = readAll(plugin.getResource("web/index.html"));
                 respond(exchange, 200, "text/html; charset=utf-8", page);
             } else if ("/api/worlds".equals(path)) {
                 respond(exchange, 200, "application/json; charset=utf-8", worldsSnapshot);
@@ -119,7 +119,7 @@ final class LedgeMapHttpServer {
         int z = number(query, "z", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
         MapTileKey key = new MapTileKey(worldId, dimension, renderer, resolution, zoom, x, z);
         var tile = tileEngine.read(key);
-        if (tile.isEmpty()) {
+        if (!tile.isPresent()) {
             exchange.getResponseHeaders().set("Retry-After", "1");
             respond(exchange, 202, "text/plain; charset=utf-8", "Rendering");
             return;
@@ -148,7 +148,7 @@ final class LedgeMapHttpServer {
         int z = number(query, "z", 0, Integer.MIN_VALUE, Integer.MAX_VALUE);
         MapTileKey key = new MapTileKey(worldId, dimension, renderer, resolution, zoom, x, z);
         var projected = tileEngine.readProjected(key);
-        if (projected.isEmpty()) {
+        if (!projected.isPresent()) {
             exchange.getResponseHeaders().set("Retry-After", "1");
             respond(exchange, 202, "text/plain; charset=utf-8", "Rendering");
             return;
@@ -178,7 +178,7 @@ final class LedgeMapHttpServer {
                     .append("\",\"resolution\":\"").append(config.resolution().name()).append("\"}");
         }
         worldsSnapshot = json.append(']').toString().getBytes(StandardCharsets.UTF_8);
-        knownWorlds = Map.copyOf(currentWorlds);
+        knownWorlds = java.util.Collections.unmodifiableMap(new java.util.HashMap<>(currentWorlds));
         playersSnapshot = currentPlayersJson();
     }
 
@@ -203,8 +203,8 @@ final class LedgeMapHttpServer {
         if (rawQuery == null || rawQuery.length() > 2048) return result;
         for (String part : rawQuery.split("&")) {
             String[] pair = part.split("=", 2);
-            String key = URLDecoder.decode(pair[0], StandardCharsets.UTF_8);
-            String value = pair.length == 2 ? URLDecoder.decode(pair[1], StandardCharsets.UTF_8) : "";
+            String key = decode(pair[0]);
+            String value = pair.length == 2 ? decode(pair[1]) : "";
             result.putIfAbsent(key, value);
         }
         return result;
@@ -212,7 +212,7 @@ final class LedgeMapHttpServer {
 
     private static String required(Map<String, String> query, String key) {
         String value = query.get(key);
-        if (value == null || value.isBlank()) throw new IllegalArgumentException("Missing " + key);
+        if (value == null || value.trim().isEmpty()) throw new IllegalArgumentException("Missing " + key);
         return value;
     }
 
@@ -250,5 +250,17 @@ final class LedgeMapHttpServer {
         exchange.getResponseHeaders().set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'");
         exchange.sendResponseHeaders(status, body.length);
         exchange.getResponseBody().write(body);
+    }
+
+    private static String decode(String value) {
+        try { return URLDecoder.decode(value, "UTF-8"); } catch (java.io.UnsupportedEncodingException e) { throw new IllegalStateException(e); }
+    }
+
+    private static byte[] readAll(java.io.InputStream in) throws IOException {
+        try (java.io.InputStream input = in; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            for (int n; (n = input.read(buffer)) > 0; ) out.write(buffer, 0, n);
+            return out.toByteArray();
+        }
     }
 }

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Named filled or outline area drawn on a map. */
+@com.github.bsideup.jabel.Desugar
 public record MapArea(String id, String worldId, String dimensionId, String name,
                       List<MapCoordinate> vertices, Style style, String colorHex, int opacity) {
     public enum Style { FILLED, OUTLINE }
@@ -13,7 +14,7 @@ public record MapArea(String id, String worldId, String dimensionId, String name
         worldId = requireId(worldId, "worldId");
         dimensionId = requireId(dimensionId, "dimensionId");
         name = MapMarker.requireName(name);
-        vertices = List.copyOf(Objects.requireNonNull(vertices, "vertices"));
+        vertices = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(Objects.requireNonNull(vertices, "vertices")));
         if (vertices.size() < 3 || vertices.size() > 4096) {
             throw new IllegalArgumentException("an area must have 3 to 4096 vertices");
         }

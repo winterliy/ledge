@@ -3,6 +3,7 @@ package dev.ledge.common;
 import java.util.Objects;
 
 /** Rendering preferences for one world and dimension. */
+@com.github.bsideup.jabel.Desugar
 public record MapWorldConfig(
         String worldId,
         String dimensionId,

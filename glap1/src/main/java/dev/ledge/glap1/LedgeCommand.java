@@ -61,13 +61,13 @@ final class LedgeCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("pregen");
-        if (args.length == 2 && args[0].equalsIgnoreCase("pregen")) return List.of("start", "pause", "continue", "cancel", "status");
+        if (args.length == 1) return java.util.Arrays.asList("pregen");
+        if (args.length == 2 && args[0].equalsIgnoreCase("pregen")) return java.util.Arrays.asList("start", "pause", "continue", "cancel", "status");
         if (args.length == 3 && args[0].equalsIgnoreCase("pregen")) {
-            return Bukkit.getWorlds().stream().map(org.bukkit.World::getName).toList();
+            return Bukkit.getWorlds().stream().map(org.bukkit.World::getName).collect(java.util.stream.Collectors.toList());
         }
-        if (args.length == 4 && args[1].equalsIgnoreCase("start")) return List.of("512", "1024", "2048");
-        if (args.length == 5 && args[1].equalsIgnoreCase("start")) return List.of("square", "circle");
-        return List.of();
+        if (args.length == 4 && args[1].equalsIgnoreCase("start")) return java.util.Arrays.asList("512", "1024", "2048");
+        if (args.length == 5 && args[1].equalsIgnoreCase("start")) return java.util.Arrays.asList("square", "circle");
+        return java.util.Collections.emptyList();
     }
 }

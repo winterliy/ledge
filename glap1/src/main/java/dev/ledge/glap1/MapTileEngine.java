@@ -78,7 +78,7 @@ final class MapTileEngine implements Runnable {
 
     Optional<BufferedImage> read(MapTileKey key) throws IOException {
         Optional<BufferedImage> image = readFresh(key);
-        if (image.isEmpty()) request(key);
+        if (!image.isPresent()) request(key);
         return image;
     }
 
@@ -107,12 +107,12 @@ final class MapTileEngine implements Runnable {
     }
 
     Optional<MapProjectedTile> readProjected(MapTileKey key) throws IOException {
-        if (key.renderer() != MapRendererType.SURFACE || readFresh(key).isEmpty()) {
+        if (key.renderer() != MapRendererType.SURFACE || !readFresh(key).isPresent()) {
             request(key);
             return Optional.empty();
         }
         Optional<MapProjectedTile> projected = store.readProjected(key);
-        if (projected.isEmpty()) request(key);
+        if (!projected.isPresent()) request(key);
         return projected;
     }
 
@@ -270,7 +270,7 @@ final class MapTileEngine implements Runnable {
             if (dirty.contains(key) || isStale(key, worldDimension, observedRevision)) return Optional.empty();
         }
         Optional<BufferedImage> image = store.read(key);
-        if (image.isEmpty()) return image;
+        if (!image.isPresent()) return image;
         synchronized (worldRevision) {
             long currentRevision = worldRevision.get();
             if (dirty.contains(key) || isStale(key, worldDimension, currentRevision)) return Optional.empty();
@@ -319,7 +319,7 @@ final class MapTileEngine implements Runnable {
     private static java.nio.file.Path regionFolder(World world) {
         java.nio.file.Path folder = world.getWorldFolder().toPath();
         java.util.List<java.nio.file.Path> candidates = new java.util.ArrayList<>();
-        for (java.nio.file.Path root : java.util.List.of(folder, folder.getParent() == null ? folder : folder.getParent().resolve(Bukkit.getWorlds().get(0).getName()))) {
+        for (java.nio.file.Path root : java.util.Arrays.asList(folder, folder.getParent() == null ? folder : folder.getParent().resolve(Bukkit.getWorlds().get(0).getName()))) {
             candidates.add(root.resolve("dimensions").resolve(world.getKey().getNamespace()).resolve(world.getKey().getKey()).resolve("region"));
         }
         switch (world.getEnvironment()) {
@@ -711,6 +711,8 @@ final class MapTileEngine implements Runnable {
         int max = world.getMaxHeight() - 1;
         return Math.max(min + 1, Math.min(max - 1, min + (max - min) / 4));
     }
+
+    @com.github.bsideup.jabel.Desugar
 
     private record WorldDimension(String worldId, String dimensionId) {}
 }

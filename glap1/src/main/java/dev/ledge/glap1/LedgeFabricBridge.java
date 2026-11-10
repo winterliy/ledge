@@ -276,7 +276,7 @@ final class LedgeFabricBridge implements PluginMessageListener, Listener {
             out.writeByte(config.resolution().ordinal());
             out.writeUTF(config.worldId());
             out.writeUTF(config.dimensionId());
-            var worlds = Bukkit.getWorlds().stream().limit(32).toList();
+            var worlds = Bukkit.getWorlds().stream().limit(32).collect(java.util.stream.Collectors.toList());
             out.writeByte(worlds.size());
             for (World world : worlds) {
                 out.writeUTF(MapTileEngine.worldId(world));
