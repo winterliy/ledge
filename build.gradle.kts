@@ -1,6 +1,6 @@
 allprojects {
     group = "dev.ledge"
-    version = "0.1.0-alpha.4"
+    version = "0.1.0-alpha.5"
 }
 
 subprojects {
