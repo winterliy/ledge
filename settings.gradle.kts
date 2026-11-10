@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ledge"
-include("common", "glap1")
+include("common", "glap1", "fabric")
