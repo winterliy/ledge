@@ -32,9 +32,117 @@ public final class LedgeMapScreen extends Screen {
 
     private String targetLabel() { return targetLabel.isEmpty() ? "차원 선택" : targetLabel; }
 
+    /** Button text after the globe icon: the label without its leading "world · " part. */
+    private String targetText() {
+        String label = targetLabel();
+        int dot = label.indexOf(" · ");
+        return dot < 0 ? label : label.substring(dot + 3);
+    }
+
     /** The world/dimension button hugs its label (at most 220 px, never into the other buttons). */
     private int targetButtonRight() {
-        return 10 + Math.min(220, font.width(targetLabel()) + 12);
+        return TOOLBAR_START + Math.min(220, font.width(targetText()) + 32);
+    }
+
+    // 16x16 toolbar icons in the same pixel style as the printer ('#' = white, '+' = light gray).
+    private static final String[] REFRESH_ICON = {
+            "                ",
+            "     #####      ",
+            "   ##     ## #  ",
+            "  #         ##  ",
+            "  #        ###  ",
+            " #        ####  ",
+            " #              ",
+            " #              ",
+            " #            # ",
+            " #            # ",
+            "  #          #  ",
+            "  #         #   ",
+            "   ##     ##    ",
+            "     #####      ",
+            "                ",
+            "                "};
+    private static final String[] GLOBE_ICON = {
+            "                ",
+            "     ######     ",
+            "   ##  ##  ##   ",
+            "  #   #  #   #  ",
+            " #+++#++++#+++# ",
+            " #   #    #   # ",
+            "#    #    #    #",
+            "################",
+            "#    #    #    #",
+            " #   #    #   # ",
+            " #+++#++++#+++# ",
+            "  #   #  #   #  ",
+            "   ##  ##  ##   ",
+            "     ######     ",
+            "                ",
+            "                "};
+    private static final String[] ZOOM_IN_ICON = {
+            "                ",
+            "   #####        ",
+            "  #     #       ",
+            " #   #   #      ",
+            " #   #   #      ",
+            " # ##### #      ",
+            " #   #   #      ",
+            " #   #   #      ",
+            "  #     #       ",
+            "   ##### #      ",
+            "          #     ",
+            "           ##   ",
+            "            ##  ",
+            "             ## ",
+            "                ",
+            "                "};
+    private static final String[] ZOOM_OUT_ICON = {
+            "                ",
+            "   #####        ",
+            "  #     #       ",
+            " #       #      ",
+            " #       #      ",
+            " # ##### #      ",
+            " #       #      ",
+            " #       #      ",
+            "  #     #       ",
+            "   ##### #      ",
+            "          #     ",
+            "           ##   ",
+            "            ##  ",
+            "             ## ",
+            "                ",
+            "                "};
+
+    private static void drawIcon(GuiGraphicsExtractor graphics, String[] rows, int x, int y) {
+        for (int row = 0; row < rows.length; row++) {
+            String line = rows[row];
+            for (int col = 0; col < line.length(); col++) {
+                char c = line.charAt(col);
+                if (c == ' ') continue;
+                graphics.fill(x + col, y + row, x + col + 1, y + row + 1, c == '#' ? 0xffffffff : 0xffaab4bd);
+            }
+        }
+    }
+
+    /** Player-marker toggle: the player's own head, dimmed while the marker is hidden. */
+    private void drawPlayerButton(GuiGraphicsExtractor graphics) {
+        if (minecraft.player == null) return;
+        int x = buttonLeft(PLAYER) + 6;
+        int y = 15;
+        net.minecraft.client.gui.components.PlayerFaceExtractor.extractRenderState(graphics, minecraft.player.getSkin(), x, y, 16);
+        if (!LedgeFabricClient.showPlayerMarker()) graphics.fill(x, y, x + 16, y + 16, 0xb0000000);
+    }
+
+    /** 16x14 pixel printer (the font has no printer emoji glyph): paper in, body, output tray, status light. */
+    private static void drawPrinterIcon(GuiGraphicsExtractor graphics, int x, int y) {
+        graphics.fill(x + 4, y, x + 12, y + 4, 0xfff2f2f2);        // paper feeding in
+        graphics.fill(x, y + 4, x + 16, y + 10, 0xff8a939b);        // body
+        graphics.fill(x + 1, y + 5, x + 15, y + 6, 0xffb9c1c8);     // top highlight
+        graphics.fill(x + 12, y + 7, x + 14, y + 8, 0xff5ee36a);    // status light
+        graphics.fill(x + 3, y + 9, x + 13, y + 10, 0xff2b3137);    // output slot
+        graphics.fill(x + 4, y + 10, x + 12, y + 14, 0xfff2f2f2);   // printed sheet
+        graphics.fill(x + 5, y + 11, x + 11, y + 12, 0xffaab4bd);   // text line
     }
 
     private static final int FACE_SIZE = 12;
@@ -179,7 +287,7 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private int tileBlocks() {
-        return LedgeFabricClient.blocksPerTile(zoom);
+        return LedgeFabricClient.blocksPerTile(tileZoom());
     }
 
     private void requestCurrentTiles() {
@@ -187,7 +295,7 @@ public final class LedgeMapScreen extends Screen {
         for (int x = centerX - visibleRangeX - 1; x <= centerX + visibleRangeX + 1; x++) {
             for (int z = centerZ - visibleRangeZ - 1; z <= centerZ + visibleRangeZ + 1; z++) {
                 if (projected && !insideProjectedView(x - centerX, z - centerZ)) continue;
-                LedgeFabricClient.requestTile(targetWorldId, dimension, targetRenderer, targetResolution, x, z, zoom);
+                LedgeFabricClient.requestTile(targetWorldId, dimension, targetRenderer, targetResolution, x, z, tileZoom());
             }
         }
         requested = true;
@@ -286,7 +394,7 @@ public final class LedgeMapScreen extends Screen {
 
     private void renderVirtual(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         graphics.fill(0, 0, width, height, 0xff10151a);
-        int mapSize = Math.min(height - 100, width - 300);
+        int mapSize = mapSize();
         mapSize = Math.max(96, mapSize);
         int tileSize = mapSize / 3;
         int left = (width - mapSize) / 2;
@@ -319,7 +427,7 @@ public final class LedgeMapScreen extends Screen {
                 int z = top + (tileZ - centerZ + 1) * tileSize + panZ;
                 if (projectedSurface) {
                     var projected = LedgeFabricClient.projectedTextureFor(targetWorldId, dimension, targetRenderer,
-                            targetResolution, tileX, tileZ, zoom);
+                            targetResolution, tileX, tileZ, tileZoom());
                     if (projected == null) {
                         graphics.fill(x, z, x + tileSize, z + tileSize / 2, 0xff252c32);
                         continue;
@@ -337,7 +445,7 @@ public final class LedgeMapScreen extends Screen {
                     continue;
                 }
                 var texture = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
-                        tileX, tileZ, zoom);
+                        tileX, tileZ, tileZoom());
                 if (texture == null && !drawFallbackTile(graphics, tileX, tileZ, x, z, tileSize)) {
                     graphics.fill(x, z, x + tileSize, z + tileSize, 0xff252c32);
                     graphics.centeredText(font, "불러오는 중", x + tileSize / 2, z + tileSize / 2, 0xffb8c2ca);
@@ -401,29 +509,27 @@ public final class LedgeMapScreen extends Screen {
             graphics.centeredText(font, "+", 10 + TOGGLE_WIDTH / 2, 18, 0xffffffff);
         } else {
             graphics.fill(buttonLeft(PLAYER), 10, buttonRight(PLAYER), 36, 0x99000000);
-            graphics.text(font, LedgeFabricClient.showPlayerMarker() ? "● 플레이어" : "○ 플레이어", buttonLeft(PLAYER) + 6, 18, 0xffffffff);
+            drawPlayerButton(graphics);
             graphics.fill(buttonLeft(ZOOM_OUT), 10, buttonRight(ZOOM_OUT), 36, 0x99000000);
-            graphics.centeredText(font, "−", buttonCenter(ZOOM_OUT), 18, 0xffffffff);
+            drawIcon(graphics, ZOOM_OUT_ICON, buttonCenter(ZOOM_OUT) - 8, 15);
             graphics.fill(buttonLeft(ZOOM_IN), 10, buttonRight(ZOOM_IN), 36, 0x99000000);
-            graphics.centeredText(font, "+", buttonCenter(ZOOM_IN), 18, 0xffffffff);
+            drawIcon(graphics, ZOOM_IN_ICON, buttonCenter(ZOOM_IN) - 8, 15);
             graphics.fill(buttonLeft(VIEW), 10, buttonRight(VIEW), 36, 0x99000000);
             graphics.centeredText(font, threeDimensional ? "3D" : "2D", buttonCenter(VIEW), 18, 0xffffffff);
-            int targetButtonLeft = 10;
+            int targetButtonLeft = TOOLBAR_START;
             int targetButtonRight = targetButtonRight();
             graphics.fill(buttonLeft(REFRESH), 10, buttonRight(REFRESH), 36, 0x99000000);
-            graphics.pose().pushMatrix();
-            graphics.pose().translate(buttonCenter(REFRESH), 23);
-            graphics.pose().scale(2.0f, 2.0f);
-            graphics.centeredText(font, "↻", 0, -4, 0xffffffff);
-            graphics.pose().popMatrix();
+            drawIcon(graphics, REFRESH_ICON, buttonCenter(REFRESH) - 8, 15);
             graphics.fill(targetButtonLeft, 10, targetButtonRight, 36, 0x99000000);
-            String shownTarget = targetLabel();
-            if (font.width(shownTarget) > targetButtonRight - targetButtonLeft - 12) {
-                shownTarget = font.plainSubstrByWidth(shownTarget, targetButtonRight - targetButtonLeft - 12 - font.width("…")) + "…";
+            drawIcon(graphics, GLOBE_ICON, targetButtonLeft + 6, 15);
+            String shownTarget = targetText();
+            int textRoom = targetButtonRight - targetButtonLeft - 30;
+            if (font.width(shownTarget) > textRoom) {
+                shownTarget = font.plainSubstrByWidth(shownTarget, textRoom - font.width("…")) + "…";
             }
-            graphics.text(font, shownTarget, targetButtonLeft + 6, 18, 0xffffffff);
-            graphics.fill(buttonLeft(PRINT), 10, buttonRight(PRINT), 36, 0x99000000);
-            graphics.text(font, printArmed ? "영역 선택 중" : "▣ 인쇄", buttonLeft(PRINT) + 6, 18, 0xffffffff);
+            graphics.text(font, shownTarget, targetButtonLeft + 26, 18, 0xffffffff);
+            graphics.fill(buttonLeft(PRINT), 10, buttonRight(PRINT), 36, printArmed ? 0xcc3c91e6 : 0x99000000);
+            drawPrinterIcon(graphics, buttonLeft(PRINT) + 6, 16);
             if (minecraft.player != null) {
                 int worldX;
                 int worldZ;
@@ -436,27 +542,26 @@ public final class LedgeMapScreen extends Screen {
                     worldX = pos.getX();
                     worldZ = pos.getZ();
                 }
-                String coordinates = "좌표  X " + worldX + "  Y " + pos.getY() + "  Z " + worldZ;
+                String coordinates = "X " + worldX + "  Z " + worldZ;
                 coordinateWidth = font.width(coordinates) + 12;
                 graphics.fill(coordLeft(), COORD_TOP, coordLeft() + coordinateWidth, COORD_BOTTOM, 0x99000000);
                 graphics.text(font, coordinates, coordLeft() + 6, COORD_TOP + 8, 0xffdce5eb);
             }
             // Separate close block at the end of the row: hides the whole toolbar.
-            graphics.fill(closeLeft(), 10, closeLeft() + TOGGLE_WIDTH, 36, 0x99000000);
-            graphics.centeredText(font, "×", closeLeft() + TOGGLE_WIDTH / 2, 18, 0xffffffff);
+            // The close block sits at the far left, where the "+" appears once the toolbar is closed.
+            graphics.fill(10, 10, 10 + TOGGLE_WIDTH, 36, 0x99000000);
+            graphics.centeredText(font, "×", 10 + TOGGLE_WIDTH / 2, 18, 0xffffffff);
         }
-        String hint = printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
+        // Status messages (refresh, print saved, ...) use the same bottom line as the hints.
+        boolean showStatus = statusMessage != null && System.currentTimeMillis() < statusUntil;
+        String hint = showStatus ? statusMessage
+                : printArmed ? "인쇄: 지도 위를 드래그해 저장할 영역을 선택하세요 · Esc 취소"
                 : selectingPrint ? "놓으면 선택한 영역을 screenshots 폴더에 저장합니다"
                 : selectingArea ? "자유 선택 · Shift: 가로/세로 직선 · 놓으면 완료" :
-                "줌 " + zoom + " · 드래그 이동 · 우클릭으로 포인트/영역 추가";
+                "드래그 이동 · 우클릭으로 포인트/영역 추가";
         int hintWidth = font.width(hint);
         graphics.fill(width / 2 - hintWidth / 2 - 6, height - 22, width / 2 + hintWidth / 2 + 6, height - 6, 0x99000000);
-        graphics.centeredText(font, hint, width / 2, height - 18, 0xffdce5eb);
-        if (statusMessage != null && System.currentTimeMillis() < statusUntil) {
-            int textWidth = font.width(statusMessage);
-            graphics.fill(width / 2 - textWidth / 2 - 6, height - 40, width / 2 + textWidth / 2 + 6, height - 26, 0xe0000000);
-            graphics.centeredText(font, statusMessage, width / 2, height - 37, 0xffffe08a);
-        }
+        graphics.centeredText(font, hint, width / 2, height - 18, showStatus ? 0xffffe08a : 0xffdce5eb);
         if (selectingPrint) {
             int sx = (int) Math.min(selectionStartX, selectionEndX);
             int sy = (int) Math.min(selectionStartY, selectionEndY);
@@ -526,12 +631,8 @@ public final class LedgeMapScreen extends Screen {
             }
         }
         if (y >= 10 && y <= 36) {
-            if (!toolbarVisible && x >= 10 && x <= 10 + TOGGLE_WIDTH) {
-                toolbarVisible = true;
-                return true;
-            }
-            if (toolbarVisible && x >= closeLeft() && x <= closeLeft() + TOGGLE_WIDTH) {
-                toolbarVisible = false;
+            if (x >= 10 && x <= 10 + TOGGLE_WIDTH) {
+                toolbarVisible = !toolbarVisible;
                 return true;
             }
         }
@@ -557,7 +658,7 @@ public final class LedgeMapScreen extends Screen {
             showStatus("지도 타일을 다시 불러옵니다.");
             return true;
         }
-        if (toolbarVisible && y >= 10 && y <= 36 && x >= 10 && x <= targetButtonRight()) {
+        if (toolbarVisible && y >= 10 && y <= 36 && x >= TOOLBAR_START && x <= targetButtonRight()) {
             cycleTarget();
             return true;
         }
@@ -676,7 +777,7 @@ public final class LedgeMapScreen extends Screen {
         }
         lastMouseX = event.x();
         lastMouseY = event.y();
-        int mapSize = Math.min(height - 100, width - 300);
+        int mapSize = mapSize();
         int tileSize = Math.max(96, mapSize) / 3;
         // Keep the sub-tile remainder as a pixel offset so panning (2D and 3D) follows the mouse smoothly.
         int shiftX = (int) Math.floor((dragX + tileSize / 2.0) / tileSize);
@@ -777,7 +878,7 @@ public final class LedgeMapScreen extends Screen {
             if (mapX1 > mapX0 && mapZ1 > mapZ0) {
                 for (int tileX = Math.floorDiv(mapX0, blocks); tileX <= Math.floorDiv(mapX1 - 1, blocks); tileX++) {
                     for (int tileZ = Math.floorDiv(mapZ0, blocks); tileZ <= Math.floorDiv(mapZ1 - 1, blocks); tileZ++) {
-                        byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, zoom);
+                        byte[] png = LedgeFabricClient.tilePng(targetWorldId, dimension, targetRenderer, targetResolution, tileX, tileZ, tileZoom());
                         if (png == null) continue;
                         try (NativeImage tile = NativeImage.read(png)) {
                             for (int py = 0; py < tile.getHeight(); py++) {
@@ -815,12 +916,12 @@ public final class LedgeMapScreen extends Screen {
 
     private int coordLeft() { return buttonRight(PRINT) + BUTTON_GAP; }
 
-    /** The close block follows the coordinate box, whose width hugs its text. */
-    private int closeLeft() { return coordLeft() + coordinateWidth + BUTTON_GAP; }
+    /** Left edge of the world button: the open/close toggle occupies the far left. */
+    private static final int TOOLBAR_START = 10 + 28 + 6;
 
     // Toolbar buttons after the world button, packed left to right: refresh, 2D/3D, -, +, player, print.
     private static final int REFRESH = 0, VIEW = 1, ZOOM_OUT = 2, ZOOM_IN = 3, PLAYER = 4, PRINT = 5;
-    private static final int[] BUTTON_WIDTHS = {38, 44, 28, 28, 84, 94};
+    private static final int[] BUTTON_WIDTHS = {38, 44, 28, 28, 28, 28};
     private static final int BUTTON_GAP = 6;
 
     private int buttonLeft(int button) {
@@ -872,13 +973,24 @@ public final class LedgeMapScreen extends Screen {
     private long lastScrollMillis;
     private long lastZoomMillis;
 
+    /**
+     * Below 0 the client magnifies the finest server tiles (zoom -1 = 2x, -3 = 8x); the server only knows 0 and up.
+     */
+    private static final int MIN_ZOOM = -3;
+
+    /** Zoom level of the tiles to request/draw: the finest server level while magnifying. */
+    private int tileZoom() { return Math.max(0, zoom); }
+
+    /** On-screen enlargement of zoom-0 tiles when zoomed in past the server's finest level. */
+    private int magnification() { return zoom < 0 ? 1 << -zoom : 1; }
+
     /** A higher zoom level covers more blocks per tile, so zooming in lowers it. */
     private void zoomIn() { changeZoom(-1); }
 
     private void zoomOut() { changeZoom(1); }
 
     private void changeZoom(int amount) {
-        int nextZoom = Math.max(0, Math.min(12, zoom + amount));
+        int nextZoom = Math.max(MIN_ZOOM, Math.min(12, zoom + amount));
         if (nextZoom != zoom) {
             zoom = nextZoom;
             followPlayer = true;
@@ -1051,7 +1163,7 @@ public final class LedgeMapScreen extends Screen {
     }
 
     private int mapSize() {
-        return Math.max(96, Math.min(height - 100, width - 300));
+        return Math.max(96, Math.min(height - 100, width - 300)) * magnification();
     }
 
     private boolean onMap(double x, double y) {
@@ -1098,25 +1210,25 @@ public final class LedgeMapScreen extends Screen {
      * already received coarser tile, or shrink four finer tiles into the cell.
      */
     private boolean drawFallbackTile(GuiGraphicsExtractor graphics, int tileX, int tileZ, int x, int z, int tileSize) {
-        for (int level = 1; level <= 3 && zoom + level <= 12; level++) {
+        for (int level = 1; level <= 3 && tileZoom() + level <= 12; level++) {
             int scale = 1 << level;
             int parentX = Math.floorDiv(tileX, scale);
             int parentZ = Math.floorDiv(tileZ, scale);
             var parent = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
-                    parentX, parentZ, zoom + level);
+                    parentX, parentZ, tileZoom() + level);
             if (parent == null) continue;
             float u0 = (tileX - parentX * scale) / (float) scale;
             float v0 = (tileZ - parentZ * scale) / (float) scale;
             graphics.blit(parent, x, z, x + tileSize, z + tileSize, u0, u0 + 1f / scale, v0, v0 + 1f / scale);
             return true;
         }
-        if (zoom == 0) return false;
+        if (tileZoom() == 0) return false;
         boolean drewAny = false;
         int half = tileSize / 2;
         for (int dx = 0; dx < 2; dx++) {
             for (int dz = 0; dz < 2; dz++) {
                 var child = LedgeFabricClient.textureFor(targetWorldId, dimension, targetRenderer, targetResolution,
-                        tileX * 2 + dx, tileZ * 2 + dz, zoom - 1);
+                        tileX * 2 + dx, tileZ * 2 + dz, tileZoom() - 1);
                 if (child == null) continue;
                 int cx = x + dx * half;
                 int cz = z + dz * half;
