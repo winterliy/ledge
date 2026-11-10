@@ -669,12 +669,12 @@ final class MapTileEngine implements Runnable {
                     Material floor = snapshot.getBlockType(localX, caveY, localZ);
                     Material above = snapshot.getBlockType(localX, caveY + 1, localZ);
                     boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
-                    samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, localZ).getKey().getKey()), caveY, exposed);
+                    samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, localZ).name().toLowerCase(java.util.Locale.ROOT)), caveY, exposed);
                 } else {
                     // Before 1.18 ChunkSnapshot#getHighestBlockYAt can report the air block above the surface; step down
                     // past colorless blocks the same way region-file samples do.
                     int y = surfaceY;
-                    String biome = snapshot.getBiome(localX, localZ).getKey().getKey();
+                    String biome = snapshot.getBiome(localX, localZ).name().toLowerCase(java.util.Locale.ROOT);
                     int color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
                     for (int depth = 0; depth < 8 && (color >>> 24) == 0 && y > minHeight; depth++) {
                         y--;
@@ -696,7 +696,7 @@ final class MapTileEngine implements Runnable {
                 ticketed.clear();
             }
             for (Chunk chunk : chunks) {
-                Schedulers.region(plugin, chunk.getWorld(), chunk.getX(), chunk.getZ(), () -> chunk.removePluginChunkTicket(plugin));
+                Schedulers.region(plugin, chunk.getWorld(), chunk.getX(), chunk.getZ(), () -> { }); // plugin chunk tickets arrived in 1.14; nothing was ticketed
             }
         }
 
