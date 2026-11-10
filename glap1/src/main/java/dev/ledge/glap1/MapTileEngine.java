@@ -319,9 +319,6 @@ final class MapTileEngine implements Runnable {
     private static java.nio.file.Path regionFolder(World world) {
         java.nio.file.Path folder = world.getWorldFolder().toPath();
         java.util.List<java.nio.file.Path> candidates = new java.util.ArrayList<>();
-        for (java.nio.file.Path root : java.util.Arrays.asList(folder, folder.getParent() == null ? folder : folder.getParent().resolve(Bukkit.getWorlds().get(0).getName()))) {
-            candidates.add(root.resolve("dimensions").resolve(world.getKey().getNamespace()).resolve(world.getKey().getKey()).resolve("region"));
-        }
         switch (world.getEnvironment()) {
             case NETHER -> candidates.add(folder.resolve("DIM-1").resolve("region"));
             case THE_END -> candidates.add(folder.resolve("DIM1").resolve("region"));
@@ -355,8 +352,16 @@ final class MapTileEngine implements Runnable {
         renderer.shutdown();
     }
 
+    /** Worlds have no namespaced key before 1.16; derive a stable id from the environment (custom worlds use their name). */
     static String dimensionId(World world) {
-        return world.getKey().toString().replace(':', '_');
+        String name = world.getName();
+        String main = Bukkit.getWorlds().isEmpty() ? "world" : Bukkit.getWorlds().get(0).getName();
+        switch (world.getEnvironment()) {
+            case NETHER: if (name.equals(main + "_nether")) return "minecraft_the_nether"; break;
+            case THE_END: if (name.equals(main + "_the_end")) return "minecraft_the_end"; break;
+            default: if (name.equals(main)) return "minecraft_overworld"; break;
+        }
+        return "minecraft_" + name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_.-]", "_");
     }
 
     static String worldId(World world) {
@@ -548,8 +553,8 @@ final class MapTileEngine implements Runnable {
             this.key = key;
             this.world = world;
             this.regionFolder = regionFolder(world);
-            this.worldMinY = world.getMinHeight();
-            this.worldHeight = world.getMaxHeight() - world.getMinHeight();
+            this.worldMinY = 0; // no negative build height before 1.17
+            this.worldHeight = world.getMaxHeight();
             this.revision = revision;
             WorldDimension worldDimension = new WorldDimension(key.worldId(), key.dimensionId());
             this.worldRevision = worldRevisions.computeIfAbsent(worldDimension, ignored -> new AtomicLong()).get();
@@ -640,7 +645,7 @@ final class MapTileEngine implements Runnable {
         private void fillSamples() {
             int spacing = key.blocksPerSample();
             int border = key.renderer() == MapRendererType.SURFACE ? 1 : 0;
-            int minHeight = world.getMinHeight();
+            int minHeight = 0; // no negative build height before 1.17
             for (int i = 0; i < samples.length; i++) {
                 int x = key.minBlockX() + (i % side - border) * spacing;
                 int z = key.minBlockZ() + (i / side - border) * spacing;
@@ -666,8 +671,16 @@ final class MapTileEngine implements Runnable {
                     boolean exposed = surfaceY > caveY + 2 && floor.isSolid() && !above.isSolid();
                     samples[i] = new MapBlockSample(colorFor(floor, snapshot.getBiome(localX, caveY, localZ).getKey().getKey()), caveY, exposed);
                 } else {
-                    Material top = snapshot.getBlockType(localX, surfaceY, localZ);
-                    samples[i] = new MapBlockSample(colorFor(top, snapshot.getBiome(localX, surfaceY, localZ).getKey().getKey()), surfaceY, false);
+                    // Before 1.18 ChunkSnapshot#getHighestBlockYAt can report the air block above the surface; step down
+                    // past colorless blocks the same way region-file samples do.
+                    int y = surfaceY;
+                    String biome = snapshot.getBiome(localX, y, localZ).getKey().getKey();
+                    int color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                    for (int depth = 0; depth < 8 && (color >>> 24) == 0 && y > minHeight; depth++) {
+                        y--;
+                        color = colorFor(snapshot.getBlockType(localX, y, localZ), biome);
+                    }
+                    samples[i] = new MapBlockSample(color, y, false);
                 }
                 loadedSamples[i] = true;
             }
@@ -707,7 +720,7 @@ final class MapTileEngine implements Runnable {
     }
 
     private static int caveSliceY(World world) {
-        int min = world.getMinHeight();
+        int min = 0; // no negative build height before 1.17
         int max = world.getMaxHeight() - 1;
         return Math.max(min + 1, Math.min(max - 1, min + (max - min) / 4));
     }
