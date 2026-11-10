@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "ledge",
+  "version": "${version}",
+  "name": "Ledge",
+  "description": "Fabric adapter for the Ledge map project.",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.ledge.fabric.LedgeFabricMod"
+    ],
+    "client": [
+      "dev.ledge.fabric.LedgeFabricClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~1.20.6",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
