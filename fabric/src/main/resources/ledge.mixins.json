@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.ledge.fabric.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "client": ["MixinClientPlayNetworkHandler", "MixinMinecraftClient"],
+  "injectors": { "defaultRequire": 1 }
+}
