@@ -1,6 +1,7 @@
 pluginManagement {
     repositories {
         maven("https://maven.fabricmc.net/")
+        maven("https://maven.legacyfabric.net/")
         gradlePluginPortal()
         mavenCentral()
     }
@@ -15,4 +16,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ledge"
-include("common", "glap1")
+include("common", "glap1", "fabric")
